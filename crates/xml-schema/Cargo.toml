@@ -1,0 +1,15 @@
+[package]
+name = "xml-schema"
+description = "Internal schema model with a RELAX NG frontend (LSP-independent)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xml-ast.workspace = true
+xml-parser.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

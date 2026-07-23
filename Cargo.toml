@@ -13,6 +13,7 @@ repository = "https://github.com/speedata/lsp-speedata"
 # Internal crates
 xml-ast = { path = "crates/xml-ast" }
 xml-parser = { path = "crates/xml-parser" }
+xml-schema = { path = "crates/xml-schema" }
 
 # External dependencies
 quick-xml = "0.36"

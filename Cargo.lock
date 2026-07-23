@@ -847,6 +847,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "xml-schema"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "xml-ast",
+ "xml-parser",
+]
+
+[[package]]
 name = "xml-server"
 version = "0.1.0"
 dependencies = [
