@@ -1,0 +1,5 @@
+---
+source: crates/xml-completion/tests/snapshot_tests.rs
+expression: "render(\"<|\")"
+---
+Element `form` -> `form` @ 1..1  — A simple form.

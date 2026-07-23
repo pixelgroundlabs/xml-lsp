@@ -1,0 +1,6 @@
+---
+source: crates/xml-completion/tests/snapshot_tests.rs
+expression: "render(\"<form |>\")"
+---
+Attribute (required) `action` -> `action="$1"` @ 6..6
+Attribute `method` -> `method="$1"` @ 6..6

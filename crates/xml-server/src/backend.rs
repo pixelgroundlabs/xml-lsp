@@ -7,12 +7,15 @@ use std::sync::{Mutex, RwLock};
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
-    Diagnostic, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializeResult,
-    InitializedParams, MessageType, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Url,
+    CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
+    CompletionTextEdit, Diagnostic, DidChangeConfigurationParams, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, Documentation, InitializeParams,
+    InitializeResult, InitializedParams, InsertTextFormat, MarkupContent, MarkupKind, MessageType,
+    Position, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Url,
 };
 use tower_lsp::{Client, LanguageServer};
+use xml_ast::LineCol;
 use xml_languages::{Activation, LanguageProfile, LanguageRegistry, SchemaRepository};
 use xml_parser::Severity;
 
@@ -29,6 +32,8 @@ pub struct Backend {
     workspace_root: RwLock<Option<PathBuf>>,
     /// Warnings collected before the client is ready for messages.
     startup_messages: Mutex<Vec<String>>,
+    /// Whether the client understands snippet completions.
+    snippet_support: RwLock<bool>,
 }
 
 impl Backend {
@@ -41,6 +46,7 @@ impl Backend {
             schemas: Mutex::new(SchemaRepository::new()),
             workspace_root: RwLock::new(None),
             startup_messages: Mutex::new(Vec::new()),
+            snippet_support: RwLock::new(false),
         }
     }
 
@@ -179,6 +185,47 @@ impl Backend {
         Some((doc.version, diagnostics))
     }
 
+    /// Computes completion items at a position, if a schema applies.
+    pub fn compute_completions(
+        &self,
+        uri: &Url,
+        position: Position,
+    ) -> Option<Vec<CompletionItem>> {
+        let doc = self.store.get(uri)?;
+        let offset = doc.line_index.offset(
+            &doc.text,
+            LineCol {
+                line: position.line,
+                col: position.character,
+            },
+        );
+        let path = uri.to_file_path().ok();
+        let resolved = self
+            .registry
+            .read()
+            .expect("registry lock is never poisoned")
+            .resolve(&doc.parse.document, &doc.text, path.as_deref())?;
+        let loaded = self
+            .schemas
+            .lock()
+            .expect("schema lock is never poisoned")
+            .load(&resolved.schema_path)
+            .ok()?;
+
+        let items =
+            xml_completion::complete(&loaded.schema, &doc.parse.document, &doc.text, offset);
+        let snippets = *self
+            .snippet_support
+            .read()
+            .expect("snippet lock is never poisoned");
+        Some(
+            items
+                .into_iter()
+                .map(|item| to_lsp_completion(&doc.text, &doc.line_index, item, snippets))
+                .collect(),
+        )
+    }
+
     /// Publishes the current diagnostics of a document. The computation
     /// happens before the `await` so no cache reference is held across an
     /// await point.
@@ -220,6 +267,19 @@ impl LanguageServer for Backend {
             .write()
             .expect("root lock is never poisoned") = root;
 
+        let snippets = params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|c| c.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .and_then(|c| c.snippet_support)
+            .unwrap_or(false);
+        *self
+            .snippet_support
+            .write()
+            .expect("snippet lock is never poisoned") = snippets;
+
         if let Some(options) = &params.initialization_options {
             self.set_config(ServerConfig::from_json(options));
         }
@@ -234,6 +294,10 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::INCREMENTAL,
                 )),
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(["<", "/", "\"", "'"].map(str::to_string).to_vec()),
+                    ..CompletionOptions::default()
+                }),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -277,6 +341,14 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        Ok(self
+            .compute_completions(&uri, position)
+            .map(CompletionResponse::Array))
+    }
+
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         self.store.close(&uri);
@@ -294,5 +366,58 @@ impl LanguageServer for Backend {
         for uri in self.store.uris() {
             self.publish_diagnostics(&uri).await;
         }
+    }
+}
+
+/// Maps an editor-agnostic completion item to the LSP shape.
+fn to_lsp_completion(
+    text: &str,
+    line_index: &xml_ast::LineIndex,
+    item: xml_completion::CompletionItem,
+    snippets: bool,
+) -> CompletionItem {
+    let start = line_index.line_col(text, item.replace.start);
+    let end = line_index.line_col(text, item.replace.end);
+    let range = Range {
+        start: Position {
+            line: start.line,
+            character: start.col,
+        },
+        end: Position {
+            line: end.line,
+            character: end.col,
+        },
+    };
+
+    let (new_text, format) = match (&item.snippet, snippets) {
+        (Some(snippet), true) => (snippet.clone(), Some(InsertTextFormat::SNIPPET)),
+        _ => (item.insert.clone(), None),
+    };
+
+    let kind = match item.kind {
+        xml_completion::CompletionItemKind::Element => CompletionItemKind::CLASS,
+        xml_completion::CompletionItemKind::Attribute => CompletionItemKind::PROPERTY,
+        xml_completion::CompletionItemKind::Value => CompletionItemKind::VALUE,
+        xml_completion::CompletionItemKind::CloseTag => CompletionItemKind::CLASS,
+    };
+
+    CompletionItem {
+        kind: Some(kind),
+        documentation: item.documentation.map(|value| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value,
+            })
+        }),
+        // Required attributes sort before optional ones.
+        sort_text: Some(format!(
+            "{}{}",
+            if item.required { "0" } else { "1" },
+            item.label
+        )),
+        text_edit: Some(CompletionTextEdit::Edit(TextEdit { range, new_text })),
+        insert_text_format: format,
+        label: item.label,
+        ..CompletionItem::default()
     }
 }

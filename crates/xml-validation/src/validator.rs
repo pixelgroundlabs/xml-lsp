@@ -21,7 +21,7 @@ pub fn validate(schema: &Schema, doc: &Document, text: &str) -> Vec<ValidationDi
 /// tables of the derivative machine, which is what makes revalidating a
 /// document on every keystroke cheap.
 pub struct Validator<'s> {
-    machine: Machine<'s>,
+    pub(crate) machine: Machine<'s>,
 }
 
 impl<'s> Validator<'s> {
@@ -143,7 +143,7 @@ impl Run<'_, '_, '_> {
         // --- Close the start tag ------------------------------------------
         let mut closed = self.machine.start_tag_close(state);
         if closed == NOT_ALLOWED {
-            let missing = self.missing_required_attributes(state);
+            let (recovered, missing) = self.machine.unblock_required_attributes(state);
             let names: Vec<String> = missing
                 .iter()
                 .filter_map(|&id| self.machine.schema.attribute_pattern(id))
@@ -166,14 +166,8 @@ impl Run<'_, '_, '_> {
                     )
                 },
             ));
-            // Recover: pretend the missing attributes were present.
-            let mut recovered = state;
-            for &attr in &missing {
-                let next = self.machine.attribute_lenient(recovered, attr);
-                if next != NOT_ALLOWED {
-                    recovered = next;
-                }
-            }
+            // Recover with the unblocked state (missing attributes are
+            // treated as present).
             closed = self.machine.start_tag_close(recovered);
             if closed == NOT_ALLOWED {
                 closed = recovered;
@@ -243,35 +237,6 @@ impl Run<'_, '_, '_> {
             }
             _ => unescape(&self.text[range.start..range.end]).into_owned(),
         }
-    }
-
-    /// Greedily determines which required attributes would unblock the
-    /// start tag close.
-    fn missing_required_attributes(&mut self, state: VId) -> Vec<PatternId> {
-        let mut missing = Vec::new();
-        let mut current = state;
-        // Each round must consume one more attribute; the candidate list
-        // is finite, so this terminates.
-        loop {
-            if self.machine.start_tag_close(current) != NOT_ALLOWED {
-                break;
-            }
-            let candidates = self.machine.expected_attributes(current);
-            let mut advanced = false;
-            for candidate in candidates {
-                let next = self.machine.attribute_lenient(current, candidate);
-                if next != NOT_ALLOWED {
-                    missing.push(candidate);
-                    current = next;
-                    advanced = true;
-                    break;
-                }
-            }
-            if !advanced {
-                break;
-            }
-        }
-        missing
     }
 
     fn report_element_not_allowed(&mut self, state: VId, element: &Element) {

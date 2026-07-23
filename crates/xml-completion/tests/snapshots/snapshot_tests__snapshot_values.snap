@@ -1,0 +1,6 @@
+---
+source: crates/xml-completion/tests/snapshot_tests.rs
+expression: "render(r#\"<form action=\"/x\" method=\"|\">\"#)"
+---
+Value `get` -> `get` @ 26..26  — Read-only request.
+Value `post` -> `post` @ 26..26

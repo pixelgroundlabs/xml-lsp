@@ -1,8 +1,8 @@
 # Architecture
 
-Status: milestone 4 — language activation and live schema validation in
-the server, on top of the validation engine (M3), the schema model (M2),
-and the LSP server with parsing and diagnostics (M1).
+Status: milestone 5 — schema-driven completion, on top of language
+activation (M4), the validation engine (M3), the schema model (M2), and
+the LSP server with parsing and diagnostics (M1).
 
 ## Overview
 
@@ -186,6 +186,33 @@ The `SchemaRepository` caches loaded schemas by path and reloads them
 when the file's mtime changes — editing the schema is picked up on the
 next validation without restarting the server.
 
+### `xml-completion`
+
+Schema-driven completion, independent of LSP types.
+
+* **Cursor context** — a backwards text scan (robust while the tag being
+  typed still breaks the parse) combined with the error-tolerant tree
+  determines what is being typed: an element name after `<`, a closing
+  tag after `</`, an attribute name inside a start tag, or a value inside
+  quotes.
+* **Expectations** — the validation engine computes the machine state at
+  the cursor by consuming everything before it (leniently, since
+  documents are invalid most of the time while typing). Element proposals
+  therefore respect the position in the content model: after `<title>`,
+  only `<author>` is offered, not everything the parent allows somewhere.
+  The expectation walker distinguishes sequence semantics for elements
+  from the order-independence of attributes.
+* **Items** — labels are namespace-aware (prefixes from the document's
+  own declarations), attributes come as `name="$1"` snippets with
+  required ones marked and already-present ones filtered out (they were
+  consumed by the state computation), values list the schema's
+  enumerations, and every item carries the `a:documentation` text from
+  the schema.
+
+The same expectation API (`content_expectations`,
+`attribute_expectations`, `attribute_pattern_at`, `element_pattern_at`
+in `xml-validation`) is the basis for hover in the next milestone.
+
 ### `xml-server`
 
 The LSP server itself (tower-lsp, LSP 3.17):
@@ -226,8 +253,7 @@ The LSP server itself (tower-lsp, LSP 3.17):
 
 ## Planned Structure (Roadmap)
 
-Feature modules still to come in the server, in this order: completion,
-hover, document symbols, folding ranges, definition/references, rename,
+Feature modules still to come in the server, in this order: hover, document symbols, folding ranges, definition/references, rename,
 code actions, semantic tokens, inlay hints. Per-language extension points
 (reference resolution, quick fixes — e.g. speedata-specific navigation)
 will grow on top of `xml-languages` when those features arrive.

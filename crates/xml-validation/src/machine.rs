@@ -575,6 +575,52 @@ impl<'s> Machine<'s> {
         }
     }
 
+    /// Greedily consumes required attributes until the start tag could
+    /// close. Returns the unblocked state and the consumed attribute
+    /// patterns — the "missing required attributes" set.
+    pub fn unblock_required_attributes(&mut self, state: VId) -> (VId, Vec<PatternId>) {
+        let mut missing = Vec::new();
+        let mut current = state;
+        // Every round must consume one more attribute; the candidate list
+        // is finite, so this terminates.
+        loop {
+            if self.start_tag_close(current) != NOT_ALLOWED {
+                break;
+            }
+            let candidates = self.expected_attributes(current);
+            let mut advanced = false;
+            for candidate in candidates {
+                let next = self.attribute_lenient(current, candidate);
+                if next != NOT_ALLOWED {
+                    missing.push(candidate);
+                    current = next;
+                    advanced = true;
+                    break;
+                }
+            }
+            if !advanced {
+                break;
+            }
+        }
+        (current, missing)
+    }
+
+    /// Closes the start tag even if required attributes are missing —
+    /// recovery and state computation for completion.
+    pub fn start_tag_close_lenient(&mut self, state: VId) -> VId {
+        let closed = self.start_tag_close(state);
+        if closed != NOT_ALLOWED {
+            return closed;
+        }
+        let (unblocked, _) = self.unblock_required_attributes(state);
+        let closed = self.start_tag_close(unblocked);
+        if closed != NOT_ALLOWED {
+            closed
+        } else {
+            unblocked
+        }
+    }
+
     /// Recovery variant of [`Self::text`]: consumes text as if it matched
     /// whatever value or data pattern was expected.
     pub fn text_lenient(&mut self, p: VId) -> VId {
@@ -679,6 +725,9 @@ impl<'s> Machine<'s> {
                 VKind::Element(id) => Some(id),
                 _ => None,
             },
+            // Elements follow sequence order: the right half of a group
+            // is only reachable once the left half can be complete.
+            false,
             &mut out,
         );
         out
@@ -695,6 +744,9 @@ impl<'s> Machine<'s> {
                 VKind::Attribute(id, _) => Some(id),
                 _ => None,
             },
+            // Attributes are order-independent: attDeriv descends into
+            // both halves of a group unconditionally.
+            true,
             &mut out,
         );
         out
@@ -705,6 +757,7 @@ impl<'s> Machine<'s> {
         p: VId,
         visited: &mut std::collections::HashSet<VId>,
         collect: &mut dyn FnMut(&VKind) -> Option<PatternId>,
+        through_groups: bool,
         out: &mut Vec<PatternId>,
     ) {
         if !visited.insert(p) {
@@ -718,19 +771,21 @@ impl<'s> Machine<'s> {
         }
         match *self.kind(p) {
             VKind::Choice(a, b) | VKind::Interleave(a, b) => {
-                self.expect_walk(a, visited, collect, out);
-                self.expect_walk(b, visited, collect, out);
+                self.expect_walk(a, visited, collect, through_groups, out);
+                self.expect_walk(b, visited, collect, through_groups, out);
             }
             VKind::Group(a, b) => {
-                self.expect_walk(a, visited, collect, out);
-                if self.nullable(a) {
-                    self.expect_walk(b, visited, collect, out);
+                self.expect_walk(a, visited, collect, through_groups, out);
+                if through_groups || self.nullable(a) {
+                    self.expect_walk(b, visited, collect, through_groups, out);
                 }
             }
-            VKind::OneOrMore(inner) => self.expect_walk(inner, visited, collect, out),
+            VKind::OneOrMore(inner) => {
+                self.expect_walk(inner, visited, collect, through_groups, out)
+            }
             // Only the current body counts; the continuation comes after
             // the end tag.
-            VKind::After(a, _) => self.expect_walk(a, visited, collect, out),
+            VKind::After(a, _) => self.expect_walk(a, visited, collect, through_groups, out),
             _ => {}
         }
     }

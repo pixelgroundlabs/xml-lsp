@@ -6,14 +6,17 @@ editor-independent — the server works with any LSP client.
 
 ## Status
 
-Milestone 4: language activation — the server resolves each document to
-its schema via `<?xml-model?>` PIs, configured language profiles
-(namespace, root element, file name, extension), or OASIS XML catalogs,
-and publishes schema validation diagnostics live. Earlier milestones:
-derivative-based validation with error recovery and suggestion-bearing
-messages (M3), the schema model with a RELAX NG frontend (M2), and the
-LSP server with error-resilient parsing and incremental synchronization
-(M1). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
+Milestone 5: schema-driven completion — context-aware proposals for
+elements (only what the content model allows at the cursor), attributes
+(required ones first, already-present ones filtered out), attribute
+values (enumerations), and closing tags, each carrying the documentation
+from the schema; snippet support when the client announces it. Earlier
+milestones: language activation via xml-model PIs, profiles, and XML
+catalogs with live validation (M4), derivative-based validation with
+error recovery (M3), the schema model with a RELAX NG frontend (M2), and
+the LSP server with error-resilient parsing and incremental
+synchronization (M1). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+for details.
 
 ## Building and Testing
 
@@ -65,6 +68,7 @@ document can also pin its schema itself with
 * `crates/xml-schema` — schema model with RELAX NG frontend
 * `crates/xml-validation` — derivative-based validation engine
 * `crates/xml-languages` — language registry: activation and schema association
+* `crates/xml-completion` — schema-driven completion
 * `crates/xml-server` — LSP server (tower-lsp), binary `xml-lsp`
 
 The tests against the real speedata schemas look for them in

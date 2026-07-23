@@ -7,10 +7,12 @@
 //! diagnostics. The same machinery answers "what is expected at this
 //! position?", which later powers completion.
 
+mod context;
 mod datatypes;
 mod diagnostics;
 mod machine;
 mod validator;
 
+pub use context::Expectations;
 pub use diagnostics::{Severity, ValidationDiagnostic, ValidationDiagnosticCode};
 pub use validator::{validate, Validator};

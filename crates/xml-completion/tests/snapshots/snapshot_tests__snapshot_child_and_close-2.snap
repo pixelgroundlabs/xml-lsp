@@ -1,0 +1,5 @@
+---
+source: crates/xml-completion/tests/snapshot_tests.rs
+expression: "render(r#\"<form action=\"/x\"><input/></|\"#)"
+---
+CloseTag `form` -> `form>` @ 28..28

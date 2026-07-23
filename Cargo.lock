@@ -876,6 +876,17 @@ name = "xml-ast"
 version = "0.1.0"
 
 [[package]]
+name = "xml-completion"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "xml-ast",
+ "xml-parser",
+ "xml-schema",
+ "xml-validation",
+]
+
+[[package]]
 name = "xml-languages"
 version = "0.1.0"
 dependencies = [
@@ -913,6 +924,7 @@ dependencies = [
  "tokio",
  "tower-lsp",
  "xml-ast",
+ "xml-completion",
  "xml-languages",
  "xml-parser",
  "xml-validation",

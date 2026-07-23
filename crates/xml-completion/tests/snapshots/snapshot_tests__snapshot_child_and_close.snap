@@ -1,0 +1,5 @@
+---
+source: crates/xml-completion/tests/snapshot_tests.rs
+expression: "render(r#\"<form action=\"/x\"><inp|</form>\"#)"
+---
+Element `input` -> `input` @ 19..22  — An input field.
