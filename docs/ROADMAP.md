@@ -41,8 +41,10 @@ One milestone = one squash commit on `main`.
   go-to-definition/references (IDs, Marks/links via per-language
   extension points), rename, quick fixes (close tag, quote attribute),
   semantic tokens, inlay hints.
-- **M8 — Zed integration**: Zed extension (WASM) registering the
-  `xml-lsp` binary; installation documentation. Other editors need only
+- **M8 — Zed integration**: mostly done early (see `editors/zed`):
+  a dev extension registers the `xml-lsp` binary, configurable via
+  `lsp.xml-lsp` settings. Remaining: publish to the Zed extension
+  registry once the feature set has settled. Other editors need only
   their usual LSP client configuration.
 
 ## Later (explicitly deferred)

@@ -26,8 +26,12 @@ cargo test             # unit, integration, and snapshot tests
 cargo insta review     # approve changed diagnostics snapshots
 ```
 
-The server communicates over stdin/stdout. Example configuration for Zed
-(`settings.json`), using the speedata Publisher schemas via their XML
+The server communicates over stdin/stdout.
+
+**Zed:** install the dev extension from [`editors/zed`](editors/zed/)
+first — Zed only launches language servers registered by an extension
+(see the instructions there). Then configure the server in
+`settings.json`, using the speedata Publisher schemas via their XML
 catalog:
 
 ```json

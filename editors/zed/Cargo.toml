@@ -1,0 +1,17 @@
+# Zed extension — built by Zed itself for wasm32-wasip1 when installed
+# as a dev extension. Deliberately not part of the main workspace.
+[package]
+name = "zed-xml-lsp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.6.0"
