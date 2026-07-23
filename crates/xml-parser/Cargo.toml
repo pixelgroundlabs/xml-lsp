@@ -1,0 +1,15 @@
+[package]
+name = "xml-parser"
+description = "Error-resilient XML parser with namespace resolution (LSP-independent)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xml-ast.workspace = true
+quick-xml.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

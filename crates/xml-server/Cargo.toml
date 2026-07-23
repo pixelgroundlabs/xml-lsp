@@ -1,0 +1,22 @@
+[package]
+name = "xml-server"
+description = "LSP server for XML (tower-lsp); binary: xml-lsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "xml-lsp"
+path = "src/main.rs"
+
+[dependencies]
+xml-ast.workspace = true
+xml-parser.workspace = true
+tower-lsp.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dashmap.workspace = true
+anyhow.workspace = true

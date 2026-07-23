@@ -1,0 +1,5 @@
+---
+source: crates/xml-parser/tests/snapshot_tests.rs
+expression: "render(\"<a><b>ok</b></a>\")"
+---
+(no diagnostics)

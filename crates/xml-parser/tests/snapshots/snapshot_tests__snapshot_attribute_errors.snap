@@ -1,0 +1,7 @@
+---
+source: crates/xml-parser/tests/snapshot_tests.rs
+expression: "render(r#\"<a x=1 y a=\"1\" a=\"2\"></a>\"#)"
+---
+Error [attribute-syntax] 5..6: attribute value of `x` must be quoted
+Error [attribute-syntax] 7..8: attribute `y` is missing a value
+Error [duplicate-attribute] 15..16: duplicate attribute `a`

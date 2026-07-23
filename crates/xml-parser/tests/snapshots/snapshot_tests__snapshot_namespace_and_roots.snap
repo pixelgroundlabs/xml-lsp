@@ -1,0 +1,7 @@
+---
+source: crates/xml-parser/tests/snapshot_tests.rs
+expression: "render(\"<x:a/><b/>text\")"
+---
+Error [undefined-namespace-prefix] 1..4: namespace prefix `x` is not declared
+Error [multiple-root-elements] 7..8: document must have exactly one root element, found additional `<b>`
+Error [text-outside-root] 10..14: text is not allowed outside the root element
