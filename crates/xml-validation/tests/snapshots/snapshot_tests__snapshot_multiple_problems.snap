@@ -1,0 +1,9 @@
+---
+source: crates/xml-validation/tests/snapshot_tests.rs
+expression: "render(r#\"<recipe serves=\"3\" vegan=\"yes\"><step>Cook.</step><garnish/></recipe>\"#)"
+---
+Error [invalid-attribute-value] 16..17: invalid value `3` for attribute `serves`; allowed: `2`, `4`
+Error [attribute-not-allowed] 19..24: attribute `vegan` is not allowed on element `recipe`
+Error [element-not-allowed] 32..36: element `step` is not allowed here; expected `name`
+Error [element-not-allowed] 50..57: element `garnish` is not allowed here; expected `name`
+Error [incomplete-content] 59..68: element `recipe` is missing required content; expected `name`

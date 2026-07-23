@@ -6,13 +6,14 @@ editor-independent — the server works with any LSP client.
 
 ## Status
 
-Milestone 2: the internal schema model with a RELAX NG frontend — the
-speedata Publisher layout schemas load completely, including per-element
-and per-attribute documentation and value enumerations. On top of
-milestone 1: error-resilient XML parsing with namespace resolution, a
-document cache with incremental synchronization, and well-formedness
-diagnostics over LSP. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
-details.
+Milestone 3: schema validation via James Clark's derivative algorithm —
+documents are checked against the schema model with error recovery and
+precise, suggestion-bearing diagnostics (typos get "did you mean"-style
+expected lists). Earlier milestones: the schema model with a RELAX NG
+frontend that loads the speedata Publisher layout schemas completely
+(M2), and the LSP server with error-resilient parsing, incremental
+synchronization, and well-formedness diagnostics (M1). See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Building and Testing
 
@@ -43,6 +44,7 @@ The server communicates over stdin/stdout. Example configuration for Zed
 * `crates/xml-ast` — syntax tree, position mapping (UTF-16), namespaces
 * `crates/xml-parser` — error-tolerant parser with diagnostics
 * `crates/xml-schema` — schema model with RELAX NG frontend
+* `crates/xml-validation` — derivative-based validation engine
 * `crates/xml-server` — LSP server (tower-lsp), binary `xml-lsp`
 
 The tests against the real speedata schemas look for them in

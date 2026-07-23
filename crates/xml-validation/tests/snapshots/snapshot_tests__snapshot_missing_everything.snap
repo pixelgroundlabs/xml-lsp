@@ -1,0 +1,6 @@
+---
+source: crates/xml-validation/tests/snapshot_tests.rs
+expression: "render(\"<recipe/>\")"
+---
+Error [missing-attributes] 1..7: element `recipe` is missing required attribute `serves`
+Error [incomplete-content] 1..7: element `recipe` is missing required content; expected `name`

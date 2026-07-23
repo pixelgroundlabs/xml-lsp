@@ -14,9 +14,11 @@ repository = "https://github.com/speedata/lsp-speedata"
 xml-ast = { path = "crates/xml-ast" }
 xml-parser = { path = "crates/xml-parser" }
 xml-schema = { path = "crates/xml-schema" }
+xml-validation = { path = "crates/xml-validation" }
 
 # External dependencies
 quick-xml = "0.36"
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

@@ -1,7 +1,7 @@
 # Architecture
 
-Status: milestone 2 — schema model with RELAX NG frontend, on top of the
-milestone 1 LSP server with parsing and diagnostics.
+Status: milestone 3 — derivative-based validation engine, on top of the
+schema model (M2) and the LSP server with parsing and diagnostics (M1).
 
 ## Overview
 
@@ -128,6 +128,40 @@ The speedata layout schemas load cleanly: both language variants share
 the namespace `urn:speedata.de:2009/publisher/en` and differ only in the
 language of their documentation strings.
 
+### `xml-validation`
+
+Validation of documents against the schema model, implementing James
+Clark's derivative algorithm for RELAX NG.
+
+* **`machine`** — the state machine. Validation states are patterns;
+  consuming a document event (start tag, attribute, text, end tag) yields
+  the derivative state, `NotAllowed` meaning "invalid here". States are
+  hash-consed (structurally equal states share one id), and the
+  derivative functions are memoized, so revalidating a document full of
+  repeated structures stays cheap; the machine survives across runs and
+  keeps its tables. Element content is converted lazily on entry, which
+  keeps recursive content models finite. The machine also answers
+  expectation queries — which elements, attributes, or text are
+  acceptable in a state — used for messages today and for completion
+  next.
+* **`validator`** — the tree walker with error recovery. Each failed
+  derivative becomes one diagnostic with a precise range (element name,
+  attribute name/value, text node), and validation continues: unknown
+  elements are skipped (their subtrees still checked via name lookup),
+  bad values are accepted leniently after reporting, missing required
+  attributes are computed by greedily unblocking the start tag. Expected
+  element names in messages are ranked by edit distance to the written
+  name, so typos get useful suggestions first.
+* **`datatypes`** — value comparison (`token` collapse vs. `string`
+  exact) and data facets: `pattern` (XSD-style anchored regexes, cached),
+  `minLength`/`maxLength`. Unknown types are accepted permissively;
+  tightening is additive.
+
+Diagnostics carry stable codes: `element-not-allowed`,
+`incomplete-content`, `text-not-allowed`, `invalid-text-value`,
+`attribute-not-allowed`, `invalid-attribute-value`,
+`missing-attributes`.
+
 ### `xml-server`
 
 The LSP server itself (tower-lsp, LSP 3.17):
@@ -166,10 +200,7 @@ The LSP server itself (tower-lsp, LSP 3.17):
 Upcoming crates — they are only created once they contain a real
 implementation (no placeholders):
 
-* **Validation engine** (next) — derivative-based matching of document
-  trees against the schema model, producing diagnostics; also the basis
-  for context-aware completion.
-* **`xml-languages`** — registry of XML languages with extensible
+* **`xml-languages`** (next) — registry of XML languages with extensible
   activation rules (file name, extension, root element, namespace), schema
   association, optional reference resolution, and quick fixes. New
   languages are added without changes to the core.

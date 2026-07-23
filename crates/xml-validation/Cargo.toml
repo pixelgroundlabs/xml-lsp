@@ -1,0 +1,17 @@
+[package]
+name = "xml-validation"
+description = "Derivative-based validation of documents against the schema model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xml-ast.workspace = true
+xml-schema.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+xml-parser.workspace = true
+insta.workspace = true

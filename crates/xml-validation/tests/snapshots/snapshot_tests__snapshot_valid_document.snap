@@ -1,0 +1,5 @@
+---
+source: crates/xml-validation/tests/snapshot_tests.rs
+expression: "render(r#\"<recipe serves=\"2\"><name>Soup</name><step>Cook.</step></recipe>\"#)"
+---
+(no diagnostics)
