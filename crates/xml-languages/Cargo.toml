@@ -1,0 +1,13 @@
+[package]
+name = "xml-languages"
+description = "Language registry: activation rules and schema association for XML dialects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+xml-ast.workspace = true
+xml-parser.workspace = true
+xml-schema.workspace = true

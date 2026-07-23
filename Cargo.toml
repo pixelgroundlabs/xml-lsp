@@ -15,6 +15,7 @@ xml-ast = { path = "crates/xml-ast" }
 xml-parser = { path = "crates/xml-parser" }
 xml-schema = { path = "crates/xml-schema" }
 xml-validation = { path = "crates/xml-validation" }
+xml-languages = { path = "crates/xml-languages" }
 
 # External dependencies
 quick-xml = "0.36"

@@ -1,7 +1,8 @@
 # Architecture
 
-Status: milestone 3 — derivative-based validation engine, on top of the
-schema model (M2) and the LSP server with parsing and diagnostics (M1).
+Status: milestone 4 — language activation and live schema validation in
+the server, on top of the validation engine (M3), the schema model (M2),
+and the LSP server with parsing and diagnostics (M1).
 
 ## Overview
 
@@ -162,6 +163,29 @@ Diagnostics carry stable codes: `element-not-allowed`,
 `attribute-not-allowed`, `invalid-attribute-value`,
 `missing-attributes`.
 
+### `xml-languages`
+
+Which XML dialect is a document, and which schema applies? The
+[`LanguageRegistry`] resolves this with three mechanisms, in order of
+precedence:
+
+1. **`<?xml-model?>`** processing instructions in the document (W3C
+   schema association); relative hrefs resolve against the document.
+   Only RELAX NG XML syntax is accepted — XSD and `.rnc` models are
+   recognized and skipped.
+2. **Language profiles** with activation rules: namespace, root element,
+   file names, extensions. Every matching rule adds to a score (specific
+   signals outweigh generic ones), the best-scoring profile wins. New XML
+   languages are pure configuration — no core changes.
+3. **OASIS XML catalogs** (`<uri name="…" uri="…"/>`), mapping the root
+   namespace to a schema; exactly what speedata ships
+   (`catalog-schema-en.xml`/`-de.xml`, which also selects the
+   documentation language).
+
+The `SchemaRepository` caches loaded schemas by path and reloads them
+when the file's mtime changes — editing the schema is picked up on the
+next validation without restarting the server.
+
 ### `xml-server`
 
 The LSP server itself (tower-lsp, LSP 3.17):
@@ -182,8 +206,13 @@ The LSP server itself (tower-lsp, LSP 3.17):
 * **`backend`** — wires everything together; implemented messages:
   `initialize`, `initialized`, `shutdown`, `didOpen`, `didChange`,
   `didClose`, `didChangeConfiguration`, push diagnostics via
-  `textDocument/publishDiagnostics`. Important: cache references are never
-  held across an await point (deadlock avoidance with DashMap).
+  `textDocument/publishDiagnostics`. On every open/change the backend
+  resolves the document's language, loads the schema through the
+  repository, and merges well-formedness and validation diagnostics into
+  one publish; schema problems surface as a single `schema-load` warning
+  instead of failing silently. Relative configuration paths resolve
+  against the workspace root. Important: cache references are never held
+  across an await point (deadlock avoidance with DashMap).
 
 ## Tests
 
@@ -197,16 +226,11 @@ The LSP server itself (tower-lsp, LSP 3.17):
 
 ## Planned Structure (Roadmap)
 
-Upcoming crates — they are only created once they contain a real
-implementation (no placeholders):
-
-* **`xml-languages`** (next) — registry of XML languages with extensible
-  activation rules (file name, extension, root element, namespace), schema
-  association, optional reference resolution, and quick fixes. New
-  languages are added without changes to the core.
-* Further feature modules in the server, in this order: completion, hover,
-  document symbols, folding ranges, definition/references, rename, code
-  actions, semantic tokens, inlay hints.
+Feature modules still to come in the server, in this order: completion,
+hover, document symbols, folding ranges, definition/references, rename,
+code actions, semantic tokens, inlay hints. Per-language extension points
+(reference resolution, quick fixes — e.g. speedata-specific navigation)
+will grow on top of `xml-languages` when those features arrive.
 
 ## Performance Notes
 

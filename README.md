@@ -6,14 +6,14 @@ editor-independent — the server works with any LSP client.
 
 ## Status
 
-Milestone 3: schema validation via James Clark's derivative algorithm —
-documents are checked against the schema model with error recovery and
-precise, suggestion-bearing diagnostics (typos get "did you mean"-style
-expected lists). Earlier milestones: the schema model with a RELAX NG
-frontend that loads the speedata Publisher layout schemas completely
-(M2), and the LSP server with error-resilient parsing, incremental
-synchronization, and well-formedness diagnostics (M1). See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
+Milestone 4: language activation — the server resolves each document to
+its schema via `<?xml-model?>` PIs, configured language profiles
+(namespace, root element, file name, extension), or OASIS XML catalogs,
+and publishes schema validation diagnostics live. Earlier milestones:
+derivative-based validation with error recovery and suggestion-bearing
+messages (M3), the schema model with a RELAX NG frontend (M2), and the
+LSP server with error-resilient parsing and incremental synchronization
+(M1). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Building and Testing
 
@@ -24,7 +24,8 @@ cargo insta review     # approve changed diagnostics snapshots
 ```
 
 The server communicates over stdin/stdout. Example configuration for Zed
-(`settings.json`):
+(`settings.json`), using the speedata Publisher schemas via their XML
+catalog:
 
 ```json
 {
@@ -32,12 +33,30 @@ The server communicates over stdin/stdout. Example configuration for Zed
     "xml-lsp": {
       "binary": { "path": "/path/to/xml-lsp" },
       "initialization_options": {
-        "diagnostics": { "enable": true, "maxCount": 1000 }
+        "diagnostics": { "enable": true, "maxCount": 1000 },
+        "schema": {
+          "catalogs": ["/path/to/publisher/schema/catalog-schema-en.xml"],
+          "languages": [
+            {
+              "name": "speedata-layout",
+              "schema": "/path/to/publisher/schema/layoutschema-en.rng",
+              "namespace": "urn:speedata.de:2009/publisher/en",
+              "rootElement": "Layout",
+              "fileNames": ["layout.xml"]
+            }
+          ]
+        }
       }
     }
   }
 }
 ```
+
+Either mechanism alone is enough: catalogs map namespaces to schemas
+(`catalog-schema-de.xml` for German documentation), while language
+profiles add activation by root element, file name, or extension. A
+document can also pin its schema itself with
+`<?xml-model href="schema.rng"?>`, which takes precedence.
 
 ## Layout
 
@@ -45,6 +64,7 @@ The server communicates over stdin/stdout. Example configuration for Zed
 * `crates/xml-parser` — error-tolerant parser with diagnostics
 * `crates/xml-schema` — schema model with RELAX NG frontend
 * `crates/xml-validation` — derivative-based validation engine
+* `crates/xml-languages` — language registry: activation and schema association
 * `crates/xml-server` — LSP server (tower-lsp), binary `xml-lsp`
 
 The tests against the real speedata schemas look for them in

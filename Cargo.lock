@@ -876,6 +876,15 @@ name = "xml-ast"
 version = "0.1.0"
 
 [[package]]
+name = "xml-languages"
+version = "0.1.0"
+dependencies = [
+ "xml-ast",
+ "xml-parser",
+ "xml-schema",
+]
+
+[[package]]
 name = "xml-parser"
 version = "0.1.0"
 dependencies = [
@@ -904,7 +913,9 @@ dependencies = [
  "tokio",
  "tower-lsp",
  "xml-ast",
+ "xml-languages",
  "xml-parser",
+ "xml-validation",
 ]
 
 [[package]]
