@@ -15,8 +15,8 @@ milestones: language activation via xml-model PIs, profiles, and XML
 catalogs with live validation (M4), derivative-based validation with
 error recovery (M3), the schema model with a RELAX NG frontend (M2), and
 the LSP server with error-resilient parsing and incremental
-synchronization (M1). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-for details.
+synchronization (M1). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details and
+[docs/ROADMAP.md](docs/ROADMAP.md) for the milestone plan.
 
 ## Building and Testing
 
