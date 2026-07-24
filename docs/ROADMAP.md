@@ -58,17 +58,14 @@ One milestone = one squash commit on `main`.
 
 ## Next
 
-- **M8 — Zed integration**: the extension (see `editors/zed`) registers
-  the `xml-lsp` binary, configurable via `lsp.xml-lsp` settings, and
-  downloads the released binary automatically when neither settings
-  nor PATH provide one. CI (fmt/clippy/test on Linux, macOS, Windows;
-  wasm build of the extension) and a release workflow (five platform
-  targets, assets named as the extension expects) are in place.
-  Remaining, in order: push the repository to GitHub, tag `v0.1.0` (the
-  release workflow attaches the binaries), then open the registry PR
-  at zed-industries/extensions (git submodule + `extensions.toml`
-  entry). Other editors need only their usual LSP client
-  configuration.
+- **M8 — Zed integration**: done. The extension (see `editors/zed`)
+  registers the `xml-lsp` binary, configurable via `lsp.xml-lsp`
+  settings, and downloads the released binary automatically when
+  neither settings nor PATH provide one. CI runs fmt/clippy/test on
+  Linux/macOS/Windows plus the wasm build; the release workflow built
+  the `v0.1.0` assets for five platform targets. Registry submission:
+  zed-industries/extensions#6951 (awaiting upstream review). Other
+  editors need only their usual LSP client configuration.
 
 ## Later (explicitly deferred)
 
