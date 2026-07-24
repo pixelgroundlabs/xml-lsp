@@ -72,13 +72,14 @@ fn collect_uris(doc: &Document, node: NodeId, base: &Path, entries: &mut HashMap
 /// Resolves a catalog/xml-model location against a base directory.
 /// Absolute paths and `file://` URLs pass through; remote URLs are not
 /// supported and yield the path verbatim (the caller will report the
-/// missing file).
+/// missing file). Rooted paths (`/x/y`) count as absolute on Windows
+/// too — catalog locations are URI references, not native paths.
 pub(crate) fn resolve_location(location: &str, base: &Path) -> PathBuf {
     if let Some(stripped) = location.strip_prefix("file://") {
         return PathBuf::from(stripped);
     }
     let path = Path::new(location);
-    if path.is_absolute() {
+    if path.is_absolute() || path.has_root() {
         path.to_path_buf()
     } else {
         base.join(path)

@@ -41,30 +41,19 @@ impl Datatypes {
     /// Is the text allowed by the data pattern (type + params)?
     pub fn data_allows(&mut self, pattern: &DataPattern, s: &str) -> bool {
         for (name, value) in &pattern.params {
-            match name.as_str() {
-                "pattern" => {
-                    if !self.matches_regex(value, s) {
-                        return false;
-                    }
-                }
-                "minLength" => {
-                    if value
-                        .parse::<usize>()
-                        .is_ok_and(|min| s.chars().count() < min)
-                    {
-                        return false;
-                    }
-                }
-                "maxLength" => {
-                    if value
-                        .parse::<usize>()
-                        .is_ok_and(|max| s.chars().count() > max)
-                    {
-                        return false;
-                    }
-                }
+            let allowed = match name.as_str() {
+                "pattern" => self.matches_regex(value, s),
+                "minLength" => !value
+                    .parse::<usize>()
+                    .is_ok_and(|min| s.chars().count() < min),
+                "maxLength" => !value
+                    .parse::<usize>()
+                    .is_ok_and(|max| s.chars().count() > max),
                 // Other facets are accepted permissively for now.
-                _ => {}
+                _ => true,
+            };
+            if !allowed {
+                return false;
             }
         }
         // Type-level checks beyond facets: nothing needed for string/token;

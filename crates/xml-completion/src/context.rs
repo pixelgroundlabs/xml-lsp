@@ -141,7 +141,7 @@ pub fn cursor_context(doc: &Document, text: &str, offset: usize) -> CursorContex
     }
 
     // --- Tree-based: inside an existing start tag ----------------------
-    let mut node = doc.node_at_offset(offset.saturating_sub(1).max(0));
+    let mut node = doc.node_at_offset(offset.saturating_sub(1));
     loop {
         match doc.kind(node) {
             NodeKind::Element(element) => {

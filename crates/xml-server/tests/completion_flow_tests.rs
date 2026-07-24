@@ -29,10 +29,16 @@ const TEST_SCHEMA: &str = r#"<grammar xmlns="http://relaxng.org/ns/structure/1.0
 </grammar>"#;
 
 fn setup_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("xml-completion-flow-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("notes.rng"), TEST_SCHEMA).unwrap();
-    dir
+    // Written exactly once per process: the tests run in parallel, and
+    // a concurrent truncate-and-write could hand a reader an empty file.
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("xml-completion-flow-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.rng"), TEST_SCHEMA).unwrap();
+        dir
+    })
+    .clone()
 }
 
 fn snippet_capabilities() -> ClientCapabilities {

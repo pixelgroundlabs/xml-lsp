@@ -42,11 +42,17 @@ const DOC: &str = r#"<root xmlns="urn:test">
 </root>"#;
 
 fn schema_path() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("xml-navigation-flow-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("annotated.rng");
-    std::fs::write(&path, TEST_SCHEMA).unwrap();
-    path
+    // Written exactly once per process: the tests run in parallel, and
+    // a concurrent truncate-and-write could hand a reader an empty file.
+    static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("xml-navigation-flow-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("annotated.rng");
+        std::fs::write(&path, TEST_SCHEMA).unwrap();
+        path
+    })
+    .clone()
 }
 
 async fn open(text: &str) -> (LspService<Backend>, Url) {

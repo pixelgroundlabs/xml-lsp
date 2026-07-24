@@ -39,7 +39,10 @@ fn setup_dir(name: &str) -> PathBuf {
 
 async fn initialized_backend(options: serde_json::Value) -> (LspService<Backend>, Url) {
     let (service, _socket) = LspService::new(Backend::new);
-    let uri = Url::parse("file:///project/notes.xml").unwrap();
+    // A real, platform-valid path: file:///project/... has no drive
+    // letter and cannot be converted back to a path on Windows, which
+    // would break file-name/extension based activation.
+    let uri = Url::from_file_path(std::env::temp_dir().join("notes.xml")).unwrap();
     service
         .inner()
         .initialize(InitializeParams {
