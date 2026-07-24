@@ -13,11 +13,21 @@ at an arbitrary binary is not enough (that is why Zed flags
    cargo build --release   # in the repository root
    ```
 
-2. Zed compiles dev extensions itself and needs a rustup toolchain with
-   the WASM target:
+2. Zed compiles dev extensions itself and needs a **rustup-managed**
+   toolchain with the WASM target (current Zed builds extensions for
+   `wasm32-wasip2`):
 
    ```sh
-   rustup target add wasm32-wasip1
+   rustup target add wasm32-wasip2
+   ```
+
+   If `cargo` resolves to a Homebrew-installed Rust (`which cargo` →
+   `/opt/homebrew/bin/cargo`), the build fails with "target may not be
+   installed" even though the target exists — put the rustup proxies
+   first in your PATH:
+
+   ```sh
+   export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
    ```
 
 3. In Zed, install the **XML** extension from the extension gallery
