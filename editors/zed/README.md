@@ -45,7 +45,7 @@ at an arbitrary binary is not enough (that is why Zed flags
      "lsp": {
        "xml-lsp": {
          "binary": {
-           "path": "/path/to/lsp-speedata/target/release/xml-lsp"
+           "path": "/path/to/xml-lsp/target/release/xml-lsp"
          },
          "initialization_options": {
            "schema": {

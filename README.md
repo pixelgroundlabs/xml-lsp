@@ -1,7 +1,8 @@
-# lsp-speedata
+# xml-lsp
 
 A modern language server (LSP 3.17) for XML written in Rust, focused on XML
-languages described by Relax NG. Initially developed for Zed, but
+languages described by Relax NG (the speedata Publisher layout language
+being the first target). Initially developed for Zed, but
 editor-independent — the server works with any LSP client.
 
 ## Status

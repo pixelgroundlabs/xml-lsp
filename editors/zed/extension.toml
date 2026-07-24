@@ -4,7 +4,7 @@ version = "0.1.0"
 schema_version = 1
 authors = ["Patrick Gundlach"]
 description = "Connects the xml-lsp language server: RELAX NG based validation, completion, and documentation for XML (e.g. speedata Publisher layouts)."
-repository = "https://github.com/speedata/lsp-speedata"
+repository = "https://github.com/speedata/xml-lsp"
 
 [language_servers.xml-lsp]
 name = "xml-lsp"
