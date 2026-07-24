@@ -1,5 +1,8 @@
 ---
 source: crates/xml-completion/tests/snapshot_tests.rs
+assertion_line: 61
 expression: "render(\"<|\")"
 ---
-Element `form` -> `form` @ 1..1  — A simple form.
+Element `form` -> `form action="${1}"${2}>
+  $0
+</form>` @ 1..1  — A simple form.

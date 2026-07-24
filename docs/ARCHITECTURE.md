@@ -1,10 +1,12 @@
 # Architecture
 
-Status: milestone 7 — navigation and comfort (document symbols,
-folding ranges, definition/references, rename, quick fixes, semantic
-tokens, inlay hints), after hover (M6), completion (M5), language
-activation (M4), the validation engine (M3), the schema model (M2),
-and the LSP server with parsing and diagnostics (M1).
+Status: milestone 7 plus editing comfort — navigation (document
+symbols, folding, definition/references, rename), quick fixes,
+semantic tokens, inlay hints, symbol completion, tag-skeleton
+completion, document formatting, and comment toggling; after hover
+(M6), completion (M5), language activation (M4), the validation engine
+(M3), the schema model (M2), and the LSP server with parsing and
+diagnostics (M1).
 
 ## Overview
 
@@ -118,14 +120,22 @@ work against it exclusively.
   that unprefixed attribute names carry no namespace), QName prefixes via
   the schema's own `xmlns` declarations, `combine` on start/define,
   implicit groups, `mixed`, and `a:documentation` collection (multiple
-  paragraphs are joined). Foreign elements such as embedded Schematron
-  rules are skipped. `include`/`externalRef`/`parentRef` are reported as
-  unsupported for now — the speedata schemas do not use them.
+  paragraphs are joined). xml-lsp's own annotations
+  (`urn:xml-lsp:annotations`: `lsp:defines`/`lsp:references` on
+  attributes, `lsp:format` on elements — see
+  [schema-annotations.md](schema-annotations.md)) are collected into
+  the model; malformed ones warn with code `schema-annotation`. Other
+  foreign elements such as embedded Schematron rules are skipped.
+  `include`/`externalRef`/`parentRef` are reported as unsupported for
+  now — the speedata schemas do not use them.
 * **`query`** — context-free traversals used for schema browsing:
   child elements, attributes, and value enumerations reachable from a
   content pattern, plus element lookup by qualified name and
-  documentation access. Context-aware variants (which of these are valid
-  *at this document position*) arrive with the validation engine.
+  documentation access. `required_attributes` (mandatory attributes of
+  a content pattern) and `allows_content` (can the element hold
+  children or text, or is it empty?) drive the tag-skeleton snippets in
+  completion. Context-aware variants (which of these are valid *at this
+  document position*) live in the validation engine.
 
 The speedata layout schemas load cleanly: both language variants share
 the namespace `urn:speedata.de:2009/publisher/en` and differ only in the
@@ -188,18 +198,19 @@ The `SchemaRepository` caches loaded schemas by path and reloads them
 when the file's mtime changes — editing the schema is picked up on the
 next validation without restarting the server.
 
-The crate also hosts the per-language **reference rules**
-(`references`): pure data describing which attributes define named
-symbols and which refer to them, keyed by the document's root
-namespace. Built in are the speedata rules — `DefineColor/@name` is
-referenced by `color`/`framecolor`/…, `DefineFontfamily`/
-`DefineFontalias` by `fontfamily`/`fontface`, `DefineTextformat` by
-`textformat`, plus graphics, matters, positioning areas, groups, page
-types, and `Mark/@select` string literals referenced by `A/@link`. A
-`SymbolIndex` built from the rules and the AST lists every occurrence
-(definition or reference) with its exact value range; XPath values are
-only indexed when they are plain string literals. New languages or
-symbol kinds are additional rules, not code changes.
+The crate also hosts the **reference rules** (`references`):
+`ReferenceRules::from_schema` collects every annotated symbol site
+(element × attribute × kind × role) from the loaded schema's
+`lsp:defines`/`lsp:references` annotations — see
+[schema-annotations.md](schema-annotations.md). The server contains no
+language-specific knowledge; a grammar that wants navigation annotates
+its attribute patterns. A `SymbolIndex` built from the rules and the
+AST lists every occurrence (definition or reference) with its exact
+value range; XPath values are only indexed when they are plain string
+literals (`form="xpath-string"`) or plain variable references
+(`form="xpath-variable"`, the `$` excluded so rename works on the bare
+name). `sites_for` answers "is this element/attribute pair a symbol
+site?" — the basis for symbol completion.
 
 ### `xml-completion`
 
@@ -223,6 +234,14 @@ Schema-driven completion, independent of LSP types.
   consumed by the state computation), values list the schema's
   enumerations, and every item carries the `a:documentation` text from
   the schema.
+* **Tag skeletons** — accepting a *freshly typed* element inserts the
+  whole tag: required attributes as tab stops, `<Foo />` self-closing
+  when the schema says the element is empty (final cursor before the
+  `/>` if optional attributes exist, after the tag otherwise), and
+  `>$0</Foo>` when it takes content. The cursor context distinguishes
+  fresh typing from a cursor inside an existing tag (where only the
+  name is replaced) — a broken tag that swallowed following text still
+  counts as fresh because its parsed name is garbage.
 
 The same expectation API (`content_expectations`,
 `attribute_expectations`, `attribute_pattern_at`, `element_pattern_at`
@@ -267,7 +286,18 @@ The LSP server itself (tower-lsp, LSP 3.17):
 * **`code_actions`** — quick fixes anchored on the stable parser
   diagnostic codes: insert the missing end tag of an unclosed element,
   remove a stray end tag, quote or terminate an attribute value, add a
-  missing value.
+  missing value. Also the comment toggle (Comment out / Uncomment):
+  inner `<!--`/`-->` are escaped to `<!-/-`/`-/->` and restored, the
+  speedata VS Code extension's convention; an empty selection targets
+  the current line.
+* **`formatting`** — whole-document formatting (algorithm ported from
+  the speedata VS Code extension and verified byte-identical against
+  it): indentation, self-closing normalization, blank lines between
+  top-level sibling groups. Language conventions come from `lsp:format`
+  annotations in the schema (`FormatStyle::from_schema`): `preserve`
+  (verbatim content), `blank-lines` (blank-line groups inside an
+  element), `inline` (single-line text elements below, HTML/MathML
+  flow).
 * **`semantic_tokens`** — full-document tokens: element names (prefix
   reported separately as `namespace`), attribute names (`xmlns` as
   `namespace`), values, comments, CDATA, PI targets, doctype.
@@ -287,8 +317,10 @@ The LSP server itself (tower-lsp, LSP 3.17):
   `initialize`, `initialized`, `shutdown`, `didOpen`, `didChange`,
   `didClose`, `didChangeConfiguration`, completion, hover,
   documentSymbol, foldingRange, definition, references,
-  prepareRename/rename, codeAction, semanticTokens/full, inlayHint,
-  push diagnostics via `textDocument/publishDiagnostics`. On every open/change the backend
+  prepareRename/rename, codeAction, formatting, semanticTokens/full,
+  inlayHint, push diagnostics via `textDocument/publishDiagnostics`.
+  Completion merges the schema-driven items with symbol-name items
+  from the reference rules (the latter work without a schema). On every open/change the backend
   resolves the document's language, loads the schema through the
   repository, and merges well-formedness and validation diagnostics into
   one publish; schema problems surface as a single `schema-load` warning
@@ -308,8 +340,9 @@ The LSP server itself (tower-lsp, LSP 3.17):
 
 ## Planned Structure (Roadmap)
 
-The server-side feature set of M1–M7 is complete. Next up is
-publishing the Zed extension (M8); the reference rules in
+The server-side feature set (M1–M7 plus editing comfort: symbol
+completion, tag skeletons, formatting, comment toggle) is complete.
+Next up is publishing the Zed extension (M8); the reference rules in
 `xml-languages` are the extension point for additional per-language
 navigation (more symbol kinds, more languages) and, later,
 configuration-driven rules.

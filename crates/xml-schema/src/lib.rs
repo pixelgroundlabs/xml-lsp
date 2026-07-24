@@ -17,7 +17,7 @@ mod rng;
 
 pub use diagnostics::{SchemaDiagnostic, SchemaDiagnosticCode, Severity};
 pub use model::{
-    AttributePattern, DataPattern, DatatypeName, Define, DefineId, ElementPattern, NameClass,
-    Pattern, PatternId, Schema, ValuePattern,
+    AttributePattern, DataPattern, DatatypeName, Define, DefineId, ElementPattern, FormatHints,
+    NameClass, Pattern, PatternId, Schema, SymbolAnnotation, SymbolRole, ValueForm, ValuePattern,
 };
-pub use rng::{load_rng, LoadResult, RNG_DOC_NAMESPACE, RNG_NAMESPACE};
+pub use rng::{load_rng, LoadResult, LSP_ANNOTATION_NAMESPACE, RNG_DOC_NAMESPACE, RNG_NAMESPACE};

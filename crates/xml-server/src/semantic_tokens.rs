@@ -6,9 +6,7 @@ use tower_lsp::lsp_types::{
     SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend,
 };
 use xml_ast::{Document, LineIndex, NodeKind, TextRange};
-use xml_languages::SymbolRole;
-
-use crate::navigation::symbol_index;
+use xml_languages::{ReferenceRules, SymbolIndex, SymbolRole};
 
 /// Token types, in legend order. The indices below must match.
 const TOKEN_TYPES: [SemanticTokenType; 8] = [
@@ -44,14 +42,20 @@ pub fn legend() -> SemanticTokensLegend {
 }
 
 /// Computes the full semantic token set of a document, delta-encoded as
-/// the LSP wants it.
-pub fn semantic_tokens(doc: &Document, text: &str, line_index: &LineIndex) -> Vec<SemanticToken> {
+/// the LSP wants it. `rules` (from the schema's annotations) highlights
+/// symbol-bearing attribute values as variables.
+pub fn semantic_tokens(
+    doc: &Document,
+    text: &str,
+    line_index: &LineIndex,
+    rules: Option<&ReferenceRules>,
+) -> Vec<SemanticToken> {
     let mut raw: Vec<(TextRange, u32, u32)> = Vec::new();
 
     // Symbol occurrences overlay attribute values.
-    let occurrences: Vec<(TextRange, u32)> = symbol_index(doc, text)
-        .map(|index| {
-            index
+    let occurrences: Vec<(TextRange, u32)> = rules
+        .map(|rules| {
+            SymbolIndex::build(rules, doc, text)
                 .all()
                 .iter()
                 .map(|occ| {
@@ -205,7 +209,7 @@ mod tests {
     fn tokens(text: &str) -> Vec<SemanticToken> {
         let parse = xml_parser::parse(text);
         let line_index = LineIndex::new(text);
-        semantic_tokens(&parse.document, text, &line_index)
+        semantic_tokens(&parse.document, text, &line_index, None)
     }
 
     #[test]
@@ -228,11 +232,14 @@ mod tests {
 
     #[test]
     fn marks_symbol_definitions_and_references() {
-        let text = r#"<Layout xmlns="urn:speedata.de:2009/publisher/en">
-  <DefineColor name="accent"/>
-  <Paragraph color="accent"/>
-</Layout>"#;
-        let toks = tokens(text);
+        let text = r#"<root xmlns="urn:test">
+  <color name="accent"/>
+  <box fill="accent"/>
+</root>"#;
+        let parse = xml_parser::parse(text);
+        let line_index = LineIndex::new(text);
+        let rules = crate::navigation::tests::rules();
+        let toks = semantic_tokens(&parse.document, text, &line_index, Some(&rules));
         let variables: Vec<&SemanticToken> =
             toks.iter().filter(|t| t.token_type == VARIABLE).collect();
         assert_eq!(variables.len(), 2);

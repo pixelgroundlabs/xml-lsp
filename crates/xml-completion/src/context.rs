@@ -11,9 +11,13 @@ use xml_ast::{Document, NodeId, NodeKind, TextRange};
 pub enum CursorContext {
     /// Typing an element name after `<`. `container` is the element whose
     /// content the new tag belongs to (`None` at document level).
+    /// `fresh` is true when the tag is being typed from scratch (no `>`,
+    /// `/>`, or attributes yet) — only then may completion insert a whole
+    /// tag skeleton instead of just the name.
     ElementName {
         container: Option<NodeId>,
         replace: TextRange,
+        fresh: bool,
     },
     /// Typing a closing tag after `</`; `element` is the innermost open
     /// element.
@@ -39,6 +43,15 @@ fn is_name_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':')
 }
 
+/// End offset of the XML name fragment starting at `offset`.
+fn word_end(text: &str, offset: usize) -> usize {
+    text[offset..]
+        .char_indices()
+        .find(|(_, c)| !is_name_char(*c))
+        .map(|(idx, _)| offset + idx)
+        .unwrap_or(text.len())
+}
+
 /// Start offset of the XML name fragment ending at `offset`.
 fn word_start(text: &str, offset: usize) -> usize {
     let mut start = offset;
@@ -62,18 +75,68 @@ pub fn cursor_context(doc: &Document, text: &str, offset: usize) -> CursorContex
         // The `<` position anchors the context lookup.
         let lt = start - 2;
         if let Some(element) = unclosed_element_at(doc, lt) {
+            // Cover the rest of the name and a directly following `>`
+            // (editors auto-pair `<` with `>`), so the inserted `name>`
+            // does not duplicate it.
+            let end = word_end(text, offset);
+            let end = if text.as_bytes().get(end) == Some(&b'>') {
+                end + 1
+            } else {
+                end
+            };
             return CursorContext::CloseTag {
                 element,
-                replace: TextRange::new(start, offset),
+                replace: TextRange::new(start, end),
             };
         }
         return CursorContext::None;
     }
     if before.ends_with('<') {
         let lt = start - 1;
+        // Extend the replace range over the rest of a name the cursor
+        // sits in (`<Optio|ns`), so accepting replaces the whole word.
+        let end = word_end(text, offset);
+        let next_is_gt = text.as_bytes().get(end) == Some(&b'>');
+        // Is the cursor inside an *existing* start tag's name? A tag
+        // parses as existing when its name is exactly the typed word —
+        // except for the bare `<word>` an editor's bracket auto-pairing
+        // produces while typing a new tag: no attributes, not
+        // self-closing, no end tag. (A broken tag that swallowed
+        // following text parses too, but with a garbage name — that is
+        // still fresh typing.)
+        let existing = {
+            let node = doc.node_at_offset(lt);
+            match doc.kind(node) {
+                NodeKind::Element(el)
+                    if el.open_tag.contains(lt) && el.name_range == TextRange::new(start, end) =>
+                {
+                    // A `<` inside the rest of the start tag means the
+                    // broken fresh tag swallowed following markup — a
+                    // real start tag cannot contain a raw `<`.
+                    let swallowed = text
+                        .get(end..el.open_tag.end)
+                        .is_some_and(|rest| rest.contains('<'));
+                    let bare_autopair = next_is_gt
+                        && el.attributes.is_empty()
+                        && !el.self_closing
+                        && el.close_tag.is_none()
+                        && el.open_tag == TextRange::new(lt, end + 1);
+                    !swallowed && !bare_autopair
+                }
+                _ => false,
+            }
+        };
+        // The tag also counts as existing when it visibly continues
+        // (`/>` or a `>` further away than the auto-pair position).
+        let rest = text[end..].trim_start();
+        let continues = !next_is_gt && (rest.starts_with('>') || rest.starts_with('/'));
+        let fresh = !existing && !continues;
+        // A fresh tag skeleton replaces the auto-paired `>` as well.
+        let replace_end = if fresh && next_is_gt { end + 1 } else { end };
         return CursorContext::ElementName {
             container: content_container(doc, lt),
-            replace: TextRange::new(start, offset),
+            replace: TextRange::new(start, replace_end),
+            fresh,
         };
     }
 

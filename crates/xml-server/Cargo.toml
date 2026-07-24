@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 xml-ast.workspace = true
 xml-parser.workspace = true
+xml-schema.workspace = true
 xml-validation.workspace = true
 xml-languages.workspace = true
 xml-completion.workspace = true

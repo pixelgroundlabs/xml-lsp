@@ -42,6 +42,19 @@ One milestone = one squash commit on `main`.
   stray end tag, quote/terminate/add attribute values); semantic
   tokens with symbol-aware value highlighting; inlay hints at distant
   end tags.
+- **Editing comfort** (single commits on `main` after M7): project
+  renamed to `xml-lsp`; symbol-name completion for reference values
+  (with rule fixes: `fontface` → font files, variables via `select`);
+  full tag skeletons on element completion (required attributes as tab
+  stops, self-closing empty elements, immediate end tags); document
+  formatting ported from and verified against the speedata VS Code
+  extension; comment toggle with escaped nesting; user-focused README.
+- **Schema annotations**: all language-specific knowledge moved out of
+  the server into `urn:xml-lsp:annotations` in the schema
+  (`lsp:defines`/`lsp:references` for symbols, `lsp:format` for
+  formatter conventions — see `docs/schema-annotations.md`). The
+  speedata schemas need regenerating with annotations (sphelper); the
+  guide is in that document.
 
 ## Next
 

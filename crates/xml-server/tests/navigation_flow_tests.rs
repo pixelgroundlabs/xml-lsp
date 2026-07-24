@@ -1,29 +1,72 @@
-//! The M7 features through the server: definition, references, rename,
-//! quick fixes, semantic tokens, and inlay hints.
+//! Navigation and comfort features through the server: definition,
+//! references, rename, quick fixes, semantic tokens, inlay hints, and
+//! symbol completion. Symbol knowledge comes from `lsp:*` annotations
+//! in a test schema — the server itself has no built-in language rules.
 
+use std::path::PathBuf;
+
+use serde_json::json;
 use tower_lsp::lsp_types::{
-    CodeActionContext, CodeActionOrCommand, CodeActionParams, DidOpenTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InlayHintParams,
-    PartialResultParams, Position, Range, ReferenceContext, ReferenceParams, RenameParams,
-    SemanticTokensParams, SemanticTokensResult, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, Url, WorkDoneProgressParams,
+    CodeActionContext, CodeActionOrCommand, CodeActionParams, CompletionParams, CompletionResponse,
+    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
+    InlayHintParams, PartialResultParams, Position, Range, ReferenceContext, ReferenceParams,
+    RenameParams, SemanticTokensParams, SemanticTokensResult, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, Url, WorkDoneProgressParams,
 };
 use tower_lsp::{LanguageServer, LspService};
 use xml_server::Backend;
 
-const LAYOUT: &str = r#"<Layout xmlns="urn:speedata.de:2009/publisher/en">
-  <DefineColor name="accent"/>
-  <Paragraph color="accent"/>
-</Layout>"#;
+/// Annotated grammar: `<color name>` defines colors, `fill` references
+/// them.
+const TEST_SCHEMA: &str = r#"<grammar xmlns="http://relaxng.org/ns/structure/1.0"
+    xmlns:lsp="urn:xml-lsp:annotations" ns="urn:test">
+  <start>
+    <element name="root">
+      <zeroOrMore>
+        <choice>
+          <element name="color">
+            <attribute name="name"><lsp:defines symbol="color"/></attribute>
+          </element>
+          <element name="box">
+            <optional><attribute name="fill"><lsp:references symbol="color"/></attribute></optional>
+          </element>
+        </choice>
+      </zeroOrMore>
+    </element>
+  </start>
+</grammar>"#;
+
+const DOC: &str = r#"<root xmlns="urn:test">
+  <color name="accent"/>
+  <box fill="accent"/>
+</root>"#;
+
+fn schema_path() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("xml-navigation-flow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("annotated.rng");
+    std::fs::write(&path, TEST_SCHEMA).unwrap();
+    path
+}
 
 async fn open(text: &str) -> (LspService<Backend>, Url) {
     let (service, _socket) = LspService::new(Backend::new);
     service
         .inner()
-        .initialize(InitializeParams::default())
+        .initialize(InitializeParams {
+            initialization_options: Some(json!({
+                "schema": {
+                    "languages": [{
+                        "schema": schema_path().to_str().unwrap(),
+                        "namespace": "urn:test"
+                    }]
+                }
+            })),
+            ..InitializeParams::default()
+        })
         .await
         .unwrap();
-    let uri = Url::parse("file:///project/layout.xml").unwrap();
+    let uri = Url::parse("file:///project/doc.xml").unwrap();
     service
         .inner()
         .did_open(DidOpenTextDocumentParams {
@@ -47,12 +90,12 @@ fn at(uri: &Url, line: u32, character: u32) -> TextDocumentPositionParams {
 
 #[tokio::test]
 async fn definition_from_reference() {
-    let (service, uri) = open(LAYOUT).await;
-    // Cursor inside the `color="accent"` value on line 2.
+    let (service, uri) = open(DOC).await;
+    // Cursor inside the `fill="accent"` value on line 2.
     let response = service
         .inner()
         .goto_definition(GotoDefinitionParams {
-            text_document_position_params: at(&uri, 2, 22),
+            text_document_position_params: at(&uri, 2, 15),
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),
         })
@@ -64,13 +107,13 @@ async fn definition_from_reference() {
     };
     assert_eq!(location.uri, uri);
     assert_eq!(location.range.start.line, 1);
-    assert_eq!(location.range.start.character, 21);
-    assert_eq!(location.range.end.character, 27);
+    assert_eq!(location.range.start.character, 15);
+    assert_eq!(location.range.end.character, 21);
 }
 
 #[tokio::test]
 async fn references_include_definition_on_request() {
-    let (service, uri) = open(LAYOUT).await;
+    let (service, uri) = open(DOC).await;
     let refs = |include| {
         let uri = uri.clone();
         let service = &service;
@@ -78,7 +121,7 @@ async fn references_include_definition_on_request() {
             service
                 .inner()
                 .references(ReferenceParams {
-                    text_document_position: at(&uri, 1, 23),
+                    text_document_position: at(&uri, 1, 17),
                     work_done_progress_params: WorkDoneProgressParams::default(),
                     partial_result_params: PartialResultParams::default(),
                     context: ReferenceContext {
@@ -95,11 +138,11 @@ async fn references_include_definition_on_request() {
 
 #[tokio::test]
 async fn rename_updates_definition_and_references() {
-    let (service, uri) = open(LAYOUT).await;
+    let (service, uri) = open(DOC).await;
     let edit = service
         .inner()
         .rename(RenameParams {
-            text_document_position: at(&uri, 2, 22),
+            text_document_position: at(&uri, 2, 15),
             new_name: "brand".to_string(),
             work_done_progress_params: WorkDoneProgressParams::default(),
         })
@@ -109,6 +152,54 @@ async fn rename_updates_definition_and_references() {
     let changes = edit.changes.expect("changes");
     assert_eq!(changes[&uri].len(), 2);
     assert!(changes[&uri].iter().all(|e| e.new_text == "brand"));
+}
+
+#[tokio::test]
+async fn completion_offers_defined_symbol_names() {
+    let text = r#"<root xmlns="urn:test">
+  <color name="accent"/>
+  <box fill=""/>
+</root>"#;
+    let (service, uri) = open(text).await;
+    // Cursor inside the empty fill value on line 2 (col 13).
+    let response = service
+        .inner()
+        .completion(CompletionParams {
+            text_document_position: at(&uri, 2, 13),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        })
+        .await
+        .unwrap()
+        .expect("completions");
+    let CompletionResponse::Array(items) = response else {
+        panic!("array expected");
+    };
+    assert!(items.iter().any(|item| item.label == "accent"), "{items:?}");
+}
+
+#[tokio::test]
+async fn semantic_tokens_mark_symbol_values() {
+    let (service, uri) = open(DOC).await;
+    let result = service
+        .inner()
+        .semantic_tokens_full(SemanticTokensParams {
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            text_document: TextDocumentIdentifier { uri },
+        })
+        .await
+        .unwrap()
+        .expect("tokens");
+    let SemanticTokensResult::Tokens(tokens) = result else {
+        panic!("full tokens expected");
+    };
+    // `accent` twice: as definition and as reference (type 7 = variable).
+    let variables: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 7).collect();
+    assert_eq!(variables.len(), 2);
+    assert_eq!(variables[0].token_modifiers_bitset, 1);
+    assert_eq!(variables[1].token_modifiers_bitset, 0);
 }
 
 #[tokio::test]
@@ -146,29 +237,6 @@ async fn quick_fix_closes_unclosed_element() {
         .expect("close action");
     let changes = close.edit.as_ref().unwrap().changes.as_ref().unwrap();
     assert_eq!(changes[&uri][0].new_text, "</b>");
-}
-
-#[tokio::test]
-async fn semantic_tokens_mark_symbol_values() {
-    let (service, uri) = open(LAYOUT).await;
-    let result = service
-        .inner()
-        .semantic_tokens_full(SemanticTokensParams {
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: PartialResultParams::default(),
-            text_document: TextDocumentIdentifier { uri },
-        })
-        .await
-        .unwrap()
-        .expect("tokens");
-    let SemanticTokensResult::Tokens(tokens) = result else {
-        panic!("full tokens expected");
-    };
-    // `accent` twice: as definition and as reference (type 7 = variable).
-    let variables: Vec<_> = tokens.data.iter().filter(|t| t.token_type == 7).collect();
-    assert_eq!(variables.len(), 2);
-    assert_eq!(variables[0].token_modifiers_bitset, 1);
-    assert_eq!(variables[1].token_modifiers_bitset, 0);
 }
 
 #[tokio::test]

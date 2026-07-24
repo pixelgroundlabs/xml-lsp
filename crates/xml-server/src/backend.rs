@@ -11,7 +11,8 @@ use tower_lsp::lsp_types::{
     CodeActionProviderCapability, CodeActionResponse, CompletionItem, CompletionItemKind,
     CompletionOptions, CompletionParams, CompletionResponse, CompletionTextEdit, Diagnostic,
     DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, Documentation,
+    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentOnTypeFormattingOptions,
+    DocumentOnTypeFormattingParams, DocumentSymbolParams, DocumentSymbolResponse, Documentation,
     FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
     InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams,
@@ -42,6 +43,12 @@ pub struct Backend {
     startup_messages: Mutex<Vec<String>>,
     /// Whether the client understands snippet completions.
     snippet_support: RwLock<bool>,
+    /// Whether the client supports `window/showDocument`.
+    show_document_support: RwLock<bool>,
+    /// Cursor position to restore after the client applied the pending
+    /// on-type edits (the editor drags the cursor past text inserted at
+    /// the cursor position); consumed by the next `didChange`.
+    pending_cursor: Mutex<Option<(Url, Position)>>,
 }
 
 impl Backend {
@@ -55,6 +62,8 @@ impl Backend {
             workspace_root: RwLock::new(None),
             startup_messages: Mutex::new(Vec::new()),
             snippet_support: RwLock::new(false),
+            show_document_support: RwLock::new(false),
+            pending_cursor: Mutex::new(None),
         }
     }
 
@@ -212,16 +221,41 @@ impl Backend {
             .registry
             .read()
             .expect("registry lock is never poisoned")
-            .resolve(&doc.parse.document, &doc.text, path.as_deref())?;
-        let loaded = self
-            .schemas
-            .lock()
-            .expect("schema lock is never poisoned")
-            .load(&resolved.schema_path)
-            .ok()?;
+            .resolve(&doc.parse.document, &doc.text, path.as_deref());
+        let mut items = Vec::new();
+        if let Some(resolved) = resolved {
+            if let Ok(loaded) = self
+                .schemas
+                .lock()
+                .expect("schema lock is never poisoned")
+                .load(&resolved.schema_path)
+            {
+                items = xml_completion::complete(
+                    &loaded.schema,
+                    &doc.parse.document,
+                    &doc.text,
+                    offset,
+                );
+            }
+        }
 
-        let items =
-            xml_completion::complete(&loaded.schema, &doc.parse.document, &doc.text, offset);
+        // Symbol names (defined colors, text formats, variables, …) for
+        // annotated reference attributes.
+        if let Some(rules) = self.symbol_rules(uri, &doc.parse.document, &doc.text) {
+            let mut labels: std::collections::HashSet<String> =
+                items.iter().map(|item| item.label.clone()).collect();
+            for item in crate::navigation::symbol_value_completions(
+                &rules,
+                &doc.parse.document,
+                &doc.text,
+                offset,
+            ) {
+                if labels.insert(item.label.clone()) {
+                    items.push(item);
+                }
+            }
+        }
+
         let snippets = *self
             .snippet_support
             .read()
@@ -278,6 +312,30 @@ impl Backend {
         })
     }
 
+    /// Symbol reference rules from the document's schema annotations, if
+    /// a schema resolves and carries any.
+    fn symbol_rules(
+        &self,
+        uri: &Url,
+        document: &xml_ast::Document,
+        text: &str,
+    ) -> Option<xml_languages::ReferenceRules> {
+        let path = uri.to_file_path().ok();
+        let resolved = self
+            .registry
+            .read()
+            .expect("registry lock is never poisoned")
+            .resolve(document, text, path.as_deref())?;
+        let loaded = self
+            .schemas
+            .lock()
+            .expect("schema lock is never poisoned")
+            .load(&resolved.schema_path)
+            .ok()?;
+        let rules = xml_languages::ReferenceRules::from_schema(&loaded.schema);
+        (!rules.is_empty()).then_some(rules)
+    }
+
     /// Definition locations for the symbol at a position.
     pub fn compute_definitions(&self, uri: &Url, position: Position) -> Option<Vec<Location>> {
         let doc = self.store.get(uri)?;
@@ -288,7 +346,8 @@ impl Backend {
                 col: position.character,
             },
         );
-        let ranges = crate::navigation::definitions(&doc.parse.document, &doc.text, offset);
+        let rules = self.symbol_rules(uri, &doc.parse.document, &doc.text)?;
+        let ranges = crate::navigation::definitions(&rules, &doc.parse.document, &doc.text, offset);
         Some(to_locations(uri, &doc.text, &doc.line_index, ranges))
     }
 
@@ -307,7 +366,9 @@ impl Backend {
                 col: position.character,
             },
         );
+        let rules = self.symbol_rules(uri, &doc.parse.document, &doc.text)?;
         let ranges = crate::navigation::references(
+            &rules,
             &doc.parse.document,
             &doc.text,
             offset,
@@ -330,7 +391,9 @@ impl Backend {
                 col: position.character,
             },
         );
-        let target = crate::rename::prepare(&doc.parse.document, &doc.text, offset)?;
+        let rules = self.symbol_rules(uri, &doc.parse.document, &doc.text);
+        let target =
+            crate::rename::prepare(rules.as_ref(), &doc.parse.document, &doc.text, offset)?;
         Some(PrepareRenameResponse::RangeWithPlaceholder {
             range: to_lsp_range(&doc.text, &doc.line_index, target.range),
             placeholder: target.text,
@@ -352,7 +415,14 @@ impl Backend {
                 col: position.character,
             },
         );
-        let edits = crate::rename::rename(&doc.parse.document, &doc.text, offset, new_name)?;
+        let rules = self.symbol_rules(uri, &doc.parse.document, &doc.text);
+        let edits = crate::rename::rename(
+            rules.as_ref(),
+            &doc.parse.document,
+            &doc.text,
+            offset,
+            new_name,
+        )?;
         let edits = edits
             .into_iter()
             .map(|(range, new_text)| TextEdit {
@@ -387,37 +457,106 @@ impl Backend {
             &doc.parse.diagnostics,
             range,
         );
-        let actions = fixes
-            .into_iter()
-            .map(|fix| {
-                let diagnostic = &doc.parse.diagnostics[fix.diagnostic];
-                let edits = fix
-                    .edits
-                    .into_iter()
-                    .map(|(range, new_text)| TextEdit {
-                        range: to_lsp_range(&doc.text, &doc.line_index, range),
-                        new_text,
-                    })
-                    .collect();
-                let mut changes = std::collections::HashMap::new();
-                changes.insert(uri.clone(), edits);
-                CodeActionOrCommand::CodeAction(CodeAction {
-                    title: fix.title,
-                    kind: Some(CodeActionKind::QUICKFIX),
-                    diagnostics: Some(parse_to_lsp(
-                        &doc.text,
-                        &doc.line_index,
-                        std::slice::from_ref(diagnostic),
-                    )),
-                    edit: Some(WorkspaceEdit {
-                        changes: Some(changes),
-                        ..WorkspaceEdit::default()
-                    }),
-                    ..CodeAction::default()
+        let mut actions: CodeActionResponse = Vec::new();
+        if let Some(toggle) = crate::code_actions::comment_toggle(&doc.text, range) {
+            let edits = toggle
+                .edits
+                .into_iter()
+                .map(|(range, new_text)| TextEdit {
+                    range: to_lsp_range(&doc.text, &doc.line_index, range),
+                    new_text,
                 })
+                .collect();
+            let mut changes = std::collections::HashMap::new();
+            changes.insert(uri.clone(), edits);
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: toggle.title,
+                kind: Some(CodeActionKind::REFACTOR_REWRITE),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(changes),
+                    ..WorkspaceEdit::default()
+                }),
+                ..CodeAction::default()
+            }));
+        }
+        let fix_actions = fixes.into_iter().map(|fix| {
+            let diagnostic = &doc.parse.diagnostics[fix.diagnostic];
+            let edits = fix
+                .edits
+                .into_iter()
+                .map(|(range, new_text)| TextEdit {
+                    range: to_lsp_range(&doc.text, &doc.line_index, range),
+                    new_text,
+                })
+                .collect();
+            let mut changes = std::collections::HashMap::new();
+            changes.insert(uri.clone(), edits);
+            CodeActionOrCommand::CodeAction(CodeAction {
+                title: fix.title,
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(parse_to_lsp(
+                    &doc.text,
+                    &doc.line_index,
+                    std::slice::from_ref(diagnostic),
+                )),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(changes),
+                    ..WorkspaceEdit::default()
+                }),
+                ..CodeAction::default()
             })
-            .collect();
+        });
+        actions.extend(fix_actions);
         Some(actions)
+    }
+
+    /// Whether a change set consists of exactly one deletion removing
+    /// the `/` of a self-closing tag; returns the deletion offset.
+    fn detect_slash_deletion(
+        &self,
+        uri: &Url,
+        changes: &[tower_lsp::lsp_types::TextDocumentContentChangeEvent],
+    ) -> Option<usize> {
+        let [change] = changes else {
+            return None;
+        };
+        if !change.text.is_empty() {
+            return None;
+        }
+        let range = change.range?;
+        let doc = self.store.get(uri)?;
+        let to_offset = |position: Position| {
+            doc.line_index.offset(
+                &doc.text,
+                LineCol {
+                    line: position.line,
+                    col: position.character,
+                },
+            )
+        };
+        let start = to_offset(range.start);
+        let end = to_offset(range.end);
+        let removed = doc.text.get(start..end)?;
+        crate::on_type::deleted_self_closing_slash(&doc.text, removed, start)
+    }
+
+    /// The workspace edit that closes the element which just lost its
+    /// self-closing slash.
+    fn auto_close_edit(&self, uri: &Url, offset: usize) -> Option<WorkspaceEdit> {
+        let doc = self.store.get(uri)?;
+        let (at, insert) = crate::on_type::auto_close_edit(&doc.parse.document, &doc.text, offset)?;
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(
+            uri.clone(),
+            vec![TextEdit {
+                range: to_lsp_range(&doc.text, &doc.line_index, xml_ast::TextRange::empty(at)),
+                new_text: insert,
+            }],
+        );
+        Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..WorkspaceEdit::default()
+        })
     }
 
     /// Human-readable schema association of a document, for the log.
@@ -495,6 +634,18 @@ impl LanguageServer for Backend {
             .write()
             .expect("snippet lock is never poisoned") = snippets;
 
+        let show_document = params
+            .capabilities
+            .window
+            .as_ref()
+            .and_then(|w| w.show_document.as_ref())
+            .map(|s| s.support)
+            .unwrap_or(false);
+        *self
+            .show_document_support
+            .write()
+            .expect("show-document lock is never poisoned") = show_document;
+
         if let Some(options) = &params.initialization_options {
             self.set_config(ServerConfig::from_json(options));
         }
@@ -523,6 +674,11 @@ impl LanguageServer for Backend {
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 })),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
+                document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                    first_trigger_character: "\n".to_string(),
+                    more_trigger_character: Some(vec![">".to_string()]),
+                }),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -550,12 +706,16 @@ impl LanguageServer for Backend {
                 .expect("registry lock is never poisoned");
             (registry.profile_count(), registry.catalog_count())
         };
+        let show_document = *self
+            .show_document_support
+            .read()
+            .expect("show-document lock is never poisoned");
         self.client
             .log_message(
                 MessageType::INFO,
                 format!(
-                    "xml-lsp ready — {profiles} language profile(s), \
-                     {catalog_entries} catalog entrie(s)"
+                    "xml-lsp ready (showDocument: {show_document}) — {profiles} language \
+                     profile(s), {catalog_entries} catalog entrie(s)"
                 ),
             )
             .await;
@@ -580,10 +740,49 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
+        // Deleting the `/` of a self-closing tag turns it into a normal
+        // start tag: detect this before the change is applied (it needs
+        // the old text) and push the matching end tag afterwards.
+        let slash_offset = self.detect_slash_deletion(&uri, &params.content_changes);
         let known = self
             .store
             .change(&uri, params.text_document.version, &params.content_changes);
         if known {
+            if let Some(edit) = slash_offset.and_then(|offset| self.auto_close_edit(&uri, offset)) {
+                let _ = self.client.apply_edit(edit).await;
+            }
+            // The client applied our on-type edits: put the cursor where
+            // it belongs (the edits dragged it along).
+            let pending = self
+                .pending_cursor
+                .lock()
+                .expect("cursor lock is never poisoned")
+                .take();
+            if let Some((pending_uri, position)) = pending {
+                if pending_uri == uri {
+                    let result = self
+                        .client
+                        .show_document(tower_lsp::lsp_types::ShowDocumentParams {
+                            uri: uri.clone(),
+                            external: Some(false),
+                            take_focus: Some(true),
+                            selection: Some(Range {
+                                start: position,
+                                end: position,
+                            }),
+                        })
+                        .await;
+                    self.client
+                        .log_message(
+                            MessageType::INFO,
+                            format!(
+                                "showDocument cursor restore to {}:{} -> {:?}",
+                                position.line, position.character, result
+                            ),
+                        )
+                        .await;
+                }
+            }
             self.publish_diagnostics(&uri).await;
         } else {
             self.client
@@ -635,6 +834,118 @@ impl LanguageServer for Backend {
         Ok((!locations.is_empty()).then_some(locations))
     }
 
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let edits = self.store.get(&uri).and_then(|doc| {
+            let indent = if params.options.insert_spaces {
+                " ".repeat(params.options.tab_size as usize)
+            } else {
+                "\t".to_string()
+            };
+            // Formatting conventions come from the schema's lsp:format
+            // annotations; without a schema the defaults apply.
+            let style = {
+                let path = uri.to_file_path().ok();
+                let resolved = self
+                    .registry
+                    .read()
+                    .expect("registry lock is never poisoned")
+                    .resolve(&doc.parse.document, &doc.text, path.as_deref());
+                resolved
+                    .and_then(|resolved| {
+                        self.schemas
+                            .lock()
+                            .expect("schema lock is never poisoned")
+                            .load(&resolved.schema_path)
+                            .ok()
+                    })
+                    .map(|loaded| crate::formatting::FormatStyle::from_schema(&loaded.schema))
+                    .unwrap_or_default()
+            };
+            let formatted = crate::formatting::format_xml(&doc.text, &indent, &style);
+            if formatted == doc.text {
+                return None;
+            }
+            let full = to_lsp_range(
+                &doc.text,
+                &doc.line_index,
+                xml_ast::TextRange::new(0, doc.text.len()),
+            );
+            Some(vec![TextEdit {
+                range: full,
+                new_text: formatted,
+            }])
+        });
+        Ok(edits)
+    }
+
+    async fn on_type_formatting(
+        &self,
+        params: DocumentOnTypeFormattingParams,
+    ) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let edit = self.store.get(&uri).and_then(|doc| {
+            let offset = doc.line_index.offset(
+                &doc.text,
+                LineCol {
+                    line: position.line,
+                    col: position.character,
+                },
+            );
+            let edits = match params.ch.as_str() {
+                "\n" => {
+                    let unit = if params.options.insert_spaces {
+                        " ".repeat(params.options.tab_size as usize)
+                    } else {
+                        "\t".to_string()
+                    };
+                    let result =
+                        crate::on_type::on_enter(&doc.parse.document, &doc.text, offset, &unit)?;
+                    // The editor drags the cursor past text inserted at
+                    // the cursor position; remember where it belongs and
+                    // put it back once the edits are applied (signalled
+                    // by the next didChange).
+                    if let Some(col) = result.cursor_col {
+                        if *self
+                            .show_document_support
+                            .read()
+                            .expect("show-document lock is never poisoned")
+                        {
+                            *self
+                                .pending_cursor
+                                .lock()
+                                .expect("cursor lock is never poisoned") = Some((
+                                uri.clone(),
+                                Position {
+                                    line: position.line,
+                                    character: col as u32,
+                                },
+                            ));
+                        }
+                    }
+                    result.edits
+                }
+                ">" => vec![crate::on_type::close_after_gt(
+                    &doc.parse.document,
+                    &doc.text,
+                    offset,
+                )?],
+                _ => return None,
+            };
+            Some(
+                edits
+                    .into_iter()
+                    .map(|(range, new_text)| TextEdit {
+                        range: to_lsp_range(&doc.text, &doc.line_index, range),
+                        new_text,
+                    })
+                    .collect(),
+            )
+        });
+        Ok(edit)
+    }
+
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let hints = self.store.get(&params.text_document.uri).map(|doc| {
             let to_offset = |position: Position| {
@@ -657,8 +968,15 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        let tokens = self.store.get(&params.text_document.uri).map(|doc| {
-            crate::semantic_tokens::semantic_tokens(&doc.parse.document, &doc.text, &doc.line_index)
+        let uri = params.text_document.uri;
+        let tokens = self.store.get(&uri).map(|doc| {
+            let rules = self.symbol_rules(&uri, &doc.parse.document, &doc.text);
+            crate::semantic_tokens::semantic_tokens(
+                &doc.parse.document,
+                &doc.text,
+                &doc.line_index,
+                rules.as_ref(),
+            )
         });
         Ok(tokens.map(|data| {
             SemanticTokensResult::Tokens(SemanticTokens {

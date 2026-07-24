@@ -382,3 +382,102 @@ fn find_element_by_name() {
     assert!(schema.find_element(None, "b").is_none());
     assert!(schema.find_element(Some("urn:test"), "c").is_none());
 }
+
+// --- lsp:* annotations (urn:xml-lsp:annotations) ------------------------
+
+const ANNOTATED: &str = r#"<grammar xmlns="http://relaxng.org/ns/structure/1.0"
+    xmlns:lsp="urn:xml-lsp:annotations" ns="urn:test">
+  <start>
+    <element name="palette">
+      <lsp:format blank-lines="true"/>
+      <zeroOrMore>
+        <element name="color">
+          <attribute name="name">
+            <lsp:defines symbol="color"/>
+          </attribute>
+        </element>
+      </zeroOrMore>
+      <zeroOrMore>
+        <element name="box">
+          <optional>
+            <attribute name="fill">
+              <lsp:references symbol="color"/>
+            </attribute>
+          </optional>
+          <optional>
+            <attribute name="select">
+              <lsp:references symbol="variable" form="xpath-variable"/>
+            </attribute>
+          </optional>
+        </element>
+      </zeroOrMore>
+      <optional>
+        <element name="raw">
+          <lsp:format preserve="true" inline="true"/>
+          <text/>
+        </element>
+      </optional>
+    </element>
+  </start>
+</grammar>"#;
+
+fn attribute_symbol(schema: &Schema, local: &str) -> Option<xml_schema::SymbolAnnotation> {
+    schema
+        .pattern_ids()
+        .find_map(|id| match schema.pattern(id) {
+            Pattern::Attribute(attr) if attr.name.matches(None, local) => attr.symbol.clone(),
+            _ => None,
+        })
+}
+
+#[test]
+fn symbol_annotations_are_collected() {
+    let schema = load_clean(ANNOTATED);
+    let def = attribute_symbol(&schema, "name").expect("defines");
+    assert_eq!(def.role, xml_schema::SymbolRole::Definition);
+    assert_eq!(def.kind, "color");
+    assert_eq!(def.form, xml_schema::ValueForm::Literal);
+
+    let refer = attribute_symbol(&schema, "fill").expect("references");
+    assert_eq!(refer.role, xml_schema::SymbolRole::Reference);
+    assert_eq!(refer.kind, "color");
+
+    let var = attribute_symbol(&schema, "select").expect("references");
+    assert_eq!(var.form, xml_schema::ValueForm::XPathVariable);
+}
+
+#[test]
+fn format_hints_are_collected() {
+    let schema = load_clean(ANNOTATED);
+    let palette = schema.find_element(Some("urn:test"), "palette").unwrap();
+    let hints = schema.element_pattern(palette).unwrap().format.unwrap();
+    assert!(hints.blank_lines && !hints.preserve && !hints.inline);
+
+    let raw = schema.find_element(Some("urn:test"), "raw").unwrap();
+    let hints = schema.element_pattern(raw).unwrap().format.unwrap();
+    assert!(hints.preserve && hints.inline && !hints.blank_lines);
+}
+
+#[test]
+fn malformed_annotations_warn_but_load() {
+    let result = load_rng(
+        r#"<grammar xmlns="http://relaxng.org/ns/structure/1.0"
+    xmlns:lsp="urn:xml-lsp:annotations">
+  <start>
+    <element name="e">
+      <attribute name="a"><lsp:defines/></attribute>
+      <attribute name="b"><lsp:references symbol="x" form="bogus"/></attribute>
+    </element>
+  </start>
+</grammar>"#,
+    );
+    let annotation_warnings = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == SchemaDiagnosticCode::Annotation)
+        .count();
+    assert_eq!(annotation_warnings, 2);
+    // The bogus form falls back to literal but the annotation is kept.
+    let symbol = attribute_symbol(&result.schema, "b").expect("kept");
+    assert_eq!(symbol.form, xml_schema::ValueForm::Literal);
+}

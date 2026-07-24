@@ -64,6 +64,76 @@ fn close_element(
     ))
 }
 
+/// Comment toggling with escaping, following the speedata VS Code
+/// extension's convention: inside a comment, `<!--` becomes `<!-/-` and
+/// `-->` becomes `-/->`, so comments can be commented out and restored
+/// losslessly (`--` must not occur inside an XML comment).
+///
+/// An empty range targets the whole line's content. If the target is a
+/// comment, the action uncomments (and unescapes); otherwise it wraps
+/// the target in a comment (escaping inner comment markers).
+pub fn comment_toggle(text: &str, range: TextRange) -> Option<QuickFixEdit> {
+    let (target, line_mode) = if range.is_empty() {
+        let line_start = text[..range.start.min(text.len())]
+            .rfind('\n')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let line_end = text[line_start..]
+            .find('\n')
+            .map(|p| line_start + p)
+            .unwrap_or(text.len());
+        let line = &text[line_start..line_end];
+        let indent_len = line.len() - line.trim_start().len();
+        let content_range = TextRange::new(line_start + indent_len, line_end);
+        if content_range.is_empty() {
+            return None;
+        }
+        (content_range, true)
+    } else {
+        (range, false)
+    };
+    let selected = text.get(target.start..target.end)?;
+    let trimmed = selected.trim();
+
+    if trimmed.starts_with("<!--") && trimmed.ends_with("-->") && trimmed.len() >= 7 {
+        // Uncomment: replace the outer comment (markers included) with
+        // the unescaped inner content.
+        let open = target.start + selected.find("<!--")?;
+        let close = target.start + selected.rfind("-->")?;
+        if close < open + 4 {
+            return None;
+        }
+        // One wrapping space on each side (added by "Comment out") is
+        // removed again; deeper whitespace stays untouched so multi-line
+        // blocks keep their layout.
+        let inner = &text[open + 4..close];
+        let inner = inner.strip_prefix(' ').unwrap_or(inner);
+        let inner = inner.strip_suffix(' ').unwrap_or(inner);
+        let unescaped = inner.replace("<!-/-", "<!--").replace("-/->", "-->");
+        return Some(QuickFixEdit {
+            title: "Uncomment".to_string(),
+            edits: vec![(TextRange::new(open, close + 3), unescaped)],
+        });
+    }
+
+    let escaped = selected.replace("<!--", "<!-/-").replace("-->", "-/->");
+    let wrapped = if line_mode {
+        format!("<!--{escaped}-->")
+    } else {
+        format!("<!-- {escaped} -->")
+    };
+    Some(QuickFixEdit {
+        title: "Comment out".to_string(),
+        edits: vec![(target, wrapped)],
+    })
+}
+
+/// A stand-alone edit-producing action (used by the comment toggle).
+pub struct QuickFixEdit {
+    pub title: String,
+    pub edits: Vec<(TextRange, String)>,
+}
+
 /// Fixes for the attribute scanner's syntax errors, distinguished by
 /// their (stable, server-owned) message text.
 fn attribute_fix(
@@ -191,6 +261,57 @@ mod tests {
         let fixes = fixes_for("<a b=></a>");
         let fix = fixes.iter().find(|(t, _)| t == "Add empty value").unwrap();
         assert_eq!(fix.1, "<a b=\"\"></a>");
+    }
+
+    fn toggle(text: &str, range: TextRange) -> (String, String) {
+        let action = comment_toggle(text, range).expect("action");
+        (action.title, apply(text, action.edits))
+    }
+
+    #[test]
+    fn comment_out_selection_escapes_inner_comments() {
+        let text = "<a><!-- note --><b/></a>";
+        let (title, result) = toggle(text, TextRange::new(3, 20));
+        assert_eq!(title, "Comment out");
+        assert_eq!(result, "<a><!-- <!-/- note -/-><b/> --></a>");
+    }
+
+    #[test]
+    fn uncomment_restores_escaped_comments() {
+        let text = "<a><!-- <!-/- note -/-><b/> --></a>";
+        let (title, result) = toggle(text, TextRange::new(3, 31));
+        assert_eq!(title, "Uncomment");
+        assert_eq!(result, "<a><!-- note --><b/></a>");
+    }
+
+    #[test]
+    fn comment_roundtrip_is_lossless() {
+        let text = "<a><!-- x --><b/></a>";
+        let (_, commented) = toggle(text, TextRange::new(3, 17));
+        let end = 3 + (commented.len() - text.len()) + (17 - 3);
+        let (_, restored) = toggle(&commented, TextRange::new(3, end));
+        assert_eq!(restored, text);
+    }
+
+    #[test]
+    fn empty_range_toggles_the_line() {
+        let text = "<a>\n  <b/>\n</a>";
+        let offset = text.find("<b/>").unwrap() + 1;
+        let (title, result) = toggle(text, TextRange::empty(offset));
+        assert_eq!(title, "Comment out");
+        assert_eq!(result, "<a>\n  <!--<b/>-->\n</a>");
+
+        let commented = result;
+        let offset = commented.find("<!--").unwrap() + 2;
+        let (title, result) = toggle(&commented, TextRange::empty(offset));
+        assert_eq!(title, "Uncomment");
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn blank_line_has_no_comment_action() {
+        let text = "<a>\n\n</a>";
+        assert!(comment_toggle(text, TextRange::empty(4)).is_none());
     }
 
     #[test]

@@ -61,10 +61,29 @@ at an arbitrary binary is not enough (that is why Zed flags
 
    Without `binary.path`, the extension looks for `xml-lsp` on `PATH`.
 
-6. Open a `layout.xml` — validation diagnostics and completion
+6. Route formatting to the language server. The XML extension sets up
+   prettier as the default formatter for XML, which silently does
+   nothing without an XML plugin — `editor: format` then appears to
+   have no effect. Add to `settings.json`:
+
+   ```json
+   {
+     "languages": {
+       "XML": {
+         "formatter": {
+           "language_server": { "name": "xml-lsp" }
+         }
+       }
+     }
+   }
+   ```
+
+7. Open a `layout.xml` — validation diagnostics and completion
    (elements, attributes, values, each with schema documentation)
    should appear. `cmd-shift-p` → `debug: open language server logs`
-   shows the server's log if something is off.
+   shows the server's log if something is off; the LSP log also shows
+   whether a `textDocument/formatting` request reaches the server when
+   you run `editor: format`.
 
 ## Notes
 

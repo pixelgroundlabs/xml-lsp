@@ -32,6 +32,9 @@ pub enum SchemaDiagnosticCode {
     UnsupportedFeature,
     /// A QName whose prefix is not declared in the schema document.
     UnknownPrefix,
+    /// A malformed `lsp:*` annotation (unknown element, missing symbol,
+    /// unknown form, …).
+    Annotation,
 }
 
 impl SchemaDiagnosticCode {
@@ -48,6 +51,7 @@ impl SchemaDiagnosticCode {
             SchemaDiagnosticCode::MissingContent => "schema-missing-content",
             SchemaDiagnosticCode::UnsupportedFeature => "schema-unsupported-feature",
             SchemaDiagnosticCode::UnknownPrefix => "schema-unknown-prefix",
+            SchemaDiagnosticCode::Annotation => "schema-annotation",
         }
     }
 }

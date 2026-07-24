@@ -2,8 +2,7 @@
 //! pairs (start and end tag stay in sync).
 
 use xml_ast::{Document, TextRange};
-
-use crate::navigation::symbol_index;
+use xml_languages::{ReferenceRules, SymbolIndex};
 
 /// What a rename at a position would change: the exact range of the
 /// current name and its text (the placeholder for the rename dialog).
@@ -13,9 +12,16 @@ pub struct RenameTarget {
 }
 
 /// The renameable thing under the cursor. Symbol occurrences win over
-/// tag names (they live in attribute values, so ranges never overlap).
-pub fn prepare(doc: &Document, text: &str, offset: usize) -> Option<RenameTarget> {
-    if let Some(index) = symbol_index(doc, text) {
+/// tag names (they live in attribute values, so ranges never overlap);
+/// without schema rules only tag pairs are renameable.
+pub fn prepare(
+    rules: Option<&ReferenceRules>,
+    doc: &Document,
+    text: &str,
+    offset: usize,
+) -> Option<RenameTarget> {
+    if let Some(rules) = rules {
+        let index = SymbolIndex::build(rules, doc, text);
         if let Some(occ) = index.occurrence_at(offset) {
             return Some(RenameTarget {
                 range: occ.range,
@@ -33,12 +39,14 @@ pub fn prepare(doc: &Document, text: &str, offset: usize) -> Option<RenameTarget
 /// Computes the text edits for a rename. Returns `None` when there is
 /// nothing renameable at the offset or the new name is invalid.
 pub fn rename(
+    rules: Option<&ReferenceRules>,
     doc: &Document,
     text: &str,
     offset: usize,
     new_name: &str,
 ) -> Option<Vec<(TextRange, String)>> {
-    if let Some(index) = symbol_index(doc, text) {
+    if let Some(rules) = rules {
+        let index = SymbolIndex::build(rules, doc, text);
         if let Some(occ) = index.occurrence_at(offset) {
             if !is_valid_symbol_name(new_name) {
                 return None;
@@ -111,64 +119,69 @@ fn is_valid_xml_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::navigation::tests::rules;
 
-    const LAYOUT: &str = r#"<Layout xmlns="urn:speedata.de:2009/publisher/en">
-  <DefineColor name="accent"/>
-  <Paragraph color="accent">text</Paragraph>
-</Layout>"#;
+    const DOC: &str = r#"<root xmlns="urn:test">
+  <color name="accent"/>
+  <box fill="accent">text</box>
+</root>"#;
 
     #[test]
     fn prepare_on_symbol() {
-        let parse = xml_parser::parse(LAYOUT);
-        let offset = LAYOUT.find("color=\"accent\"").unwrap() + 8;
-        let target = prepare(&parse.document, LAYOUT, offset).expect("target");
+        let parse = xml_parser::parse(DOC);
+        let rules = rules();
+        let offset = DOC.find("fill=\"accent\"").unwrap() + 7;
+        let target = prepare(Some(&rules), &parse.document, DOC, offset).expect("target");
         assert_eq!(target.text, "accent");
     }
 
     #[test]
     fn rename_symbol_changes_all_occurrences() {
-        let parse = xml_parser::parse(LAYOUT);
-        let offset = LAYOUT.find("name=\"accent\"").unwrap() + 7;
-        let edits = rename(&parse.document, LAYOUT, offset, "brand").expect("edits");
+        let parse = xml_parser::parse(DOC);
+        let rules = rules();
+        let offset = DOC.find("name=\"accent\"").unwrap() + 7;
+        let edits = rename(Some(&rules), &parse.document, DOC, offset, "brand").expect("edits");
         assert_eq!(edits.len(), 2);
         for (range, new) in &edits {
-            assert_eq!(&LAYOUT[range.start..range.end], "accent");
+            assert_eq!(&DOC[range.start..range.end], "accent");
             assert_eq!(new, "brand");
         }
     }
 
     #[test]
-    fn rename_tag_pair() {
-        let parse = xml_parser::parse(LAYOUT);
-        let offset = LAYOUT.find("<Paragraph").unwrap() + 3;
-        let edits = rename(&parse.document, LAYOUT, offset, "Textblock").expect("edits");
+    fn rename_tag_pair_works_without_rules() {
+        let parse = xml_parser::parse(DOC);
+        let offset = DOC.find("<box").unwrap() + 2;
+        let edits = rename(None, &parse.document, DOC, offset, "frame").expect("edits");
         assert_eq!(edits.len(), 2);
-        assert_eq!(&LAYOUT[edits[0].0.start..edits[0].0.end], "Paragraph");
-        assert_eq!(&LAYOUT[edits[1].0.start..edits[1].0.end], "Paragraph");
+        assert_eq!(&DOC[edits[0].0.start..edits[0].0.end], "box");
+        assert_eq!(&DOC[edits[1].0.start..edits[1].0.end], "box");
     }
 
     #[test]
     fn rename_from_end_tag() {
-        let parse = xml_parser::parse(LAYOUT);
-        let offset = LAYOUT.find("</Paragraph>").unwrap() + 4;
-        let edits = rename(&parse.document, LAYOUT, offset, "Textblock").expect("edits");
+        let parse = xml_parser::parse(DOC);
+        let offset = DOC.find("</box>").unwrap() + 3;
+        let edits = rename(None, &parse.document, DOC, offset, "frame").expect("edits");
         assert_eq!(edits.len(), 2);
     }
 
     #[test]
     fn invalid_names_are_rejected() {
-        let parse = xml_parser::parse(LAYOUT);
-        let tag_offset = LAYOUT.find("<Paragraph").unwrap() + 3;
-        assert!(rename(&parse.document, LAYOUT, tag_offset, "1bad").is_none());
-        assert!(rename(&parse.document, LAYOUT, tag_offset, "").is_none());
-        let sym_offset = LAYOUT.find("name=\"accent\"").unwrap() + 7;
-        assert!(rename(&parse.document, LAYOUT, sym_offset, "a\"b").is_none());
+        let parse = xml_parser::parse(DOC);
+        let rules = rules();
+        let tag_offset = DOC.find("<box").unwrap() + 2;
+        assert!(rename(None, &parse.document, DOC, tag_offset, "1bad").is_none());
+        assert!(rename(None, &parse.document, DOC, tag_offset, "").is_none());
+        let sym_offset = DOC.find("name=\"accent\"").unwrap() + 7;
+        assert!(rename(Some(&rules), &parse.document, DOC, sym_offset, "a\"b").is_none());
     }
 
     #[test]
     fn text_content_is_not_renameable() {
-        let parse = xml_parser::parse(LAYOUT);
-        let offset = LAYOUT.find(">text<").unwrap() + 2;
-        assert!(prepare(&parse.document, LAYOUT, offset).is_none());
+        let parse = xml_parser::parse(DOC);
+        let rules = rules();
+        let offset = DOC.find(">text<").unwrap() + 2;
+        assert!(prepare(Some(&rules), &parse.document, DOC, offset).is_none());
     }
 }

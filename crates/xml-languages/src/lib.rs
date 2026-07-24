@@ -21,8 +21,7 @@ mod xml_model;
 
 pub use catalog::CatalogError;
 pub use references::{
-    reference_rules_for, DefinitionSite, ReferenceRules, ReferenceSite, SymbolIndex,
-    SymbolOccurrence, SymbolRole, SymbolRule, ValueForm,
+    ReferenceRules, SymbolIndex, SymbolOccurrence, SymbolRole, SymbolSite, ValueForm,
 };
 pub use registry::{
     Activation, LanguageProfile, LanguageRegistry, ResolutionOrigin, ResolvedSchema,

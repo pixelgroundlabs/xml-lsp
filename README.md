@@ -1,64 +1,73 @@
 # xml-lsp
 
-A modern language server (LSP 3.17) for XML written in Rust, focused on XML
-languages described by Relax NG (the speedata Publisher layout language
-being the first target). Initially developed for Zed, but
-editor-independent — the server works with any LSP client.
+A language server (LSP 3.17) for XML, written in Rust. It understands
+XML languages described by a RELAX NG schema and turns the schema into
+editor features: validation as you type, context-aware completion,
+documentation on hover, navigation, and more. The first target is the
+[speedata Publisher](https://www.speedata.de/) layout language, but any
+RELAX NG grammar works — new languages are configuration, not code.
 
-## Status
+## Features
 
-Milestone 7 (in progress): document symbols (hierarchical outline with
-identifying attributes as details) and folding ranges (elements,
-comments, CDATA). Milestone 6: hover — schema documentation for the element, attribute,
-or attribute value under the cursor as Markdown, including the allowed
-values of enumerated attributes; the documentation language follows the
-configured schema variant. Before that, milestone 5: schema-driven
-completion — context-aware proposals for
-elements (only what the content model allows at the cursor), attributes
-(required ones first, already-present ones filtered out), attribute
-values (enumerations), and closing tags, each carrying the documentation
-from the schema; snippet support when the client announces it. Earlier
-milestones: language activation via xml-model PIs, profiles, and XML
-catalogs with live validation (M4), derivative-based validation with
-error recovery (M3), the schema model with a RELAX NG frontend (M2), and
-the LSP server with error-resilient parsing and incremental
-synchronization (M1). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details and
-[docs/ROADMAP.md](docs/ROADMAP.md) for the milestone plan.
+* **Validation** — well-formedness and schema validation on every
+  keystroke, with precise positions, stable error codes, and "did you
+  mean" suggestions for misspelled elements.
+* **Completion** — elements valid *at the cursor position* (not just
+  anywhere in the parent), attributes (required first, present ones
+  filtered), and attribute values. Accepting a new element inserts the
+  whole tag: required attributes as tab stops, `<Options />`
+  self-closing for empty elements (cursor before `/>` when optional
+  attributes exist), and the closing tag for container elements.
+* **Symbol-aware values** — attributes that reference named things
+  (`color=`, `fontfamily=`, `select="$…"`, …) complete to the names
+  defined in the document. Which attributes define and reference which
+  symbols is declared *in the schema* via small annotations — see
+  [docs/schema-annotations.md](docs/schema-annotations.md).
+* **Hover** — the schema documentation for the element, attribute, or
+  value under the cursor, including allowed values.
+* **Navigation** — go-to-definition and find-references for annotated
+  symbols (`DefineColor` ↔ `color=`, marks ↔ links, variables, …),
+  document outline, folding.
+* **Rename** — symbols (definition plus all references) and element
+  tag pairs (start and end tag together).
+* **Quick fixes** — close an unclosed element, remove a stray end tag,
+  quote or terminate attribute values, add missing values.
+* **Comment toggle** — code actions to comment/uncomment; nested
+  comments are escaped (`<!--` ↔ `<!-/-`, `-->` ↔ `-/->`) and restored
+  losslessly.
+* **Formatting** — whole-document formatting: indentation, empty
+  elements become self-closing, blank lines between top-level blocks.
+  Per-element conventions (verbatim content, blank-line groups, inline
+  text flow) come from `lsp:format` annotations in the schema.
+* **Semantic tokens & inlay hints** — symbol references highlighted
+  like identifiers; the identifying attribute shown after distant end
+  tags (`</Record> element="data"`).
 
-## Building and Testing
+## Installation
 
 ```sh
-cargo build            # binary: target/debug/xml-lsp
-cargo test             # unit, integration, and snapshot tests
-cargo insta review     # approve changed diagnostics snapshots
+cargo build --release    # binary: target/release/xml-lsp
 ```
 
-The server communicates over stdin/stdout.
+The server speaks LSP over stdin/stdout; any LSP client can use it.
 
-**Zed:** install the dev extension from [`editors/zed`](editors/zed/)
-first — Zed only launches language servers registered by an extension
-(see the instructions there). Then configure the server in
-`settings.json`, using the speedata Publisher schemas via their XML
-catalog:
+## Editor setup
+
+### Zed
+
+Install the dev extension from [`editors/zed`](editors/zed/) — Zed only
+launches language servers registered by an extension (instructions in
+that directory). Then point Zed at the binary and your schemas in
+`settings.json`:
 
 ```json
 {
   "lsp": {
     "xml-lsp": {
-      "binary": { "path": "/path/to/xml-lsp" },
+      "binary": { "path": "/path/to/xml-lsp/target/release/xml-lsp" },
       "initialization_options": {
-        "diagnostics": { "enable": true, "maxCount": 1000 },
         "schema": {
-          "catalogs": ["/path/to/publisher/schema/catalog-schema-en.xml"],
-          "languages": [
-            {
-              "name": "speedata-layout",
-              "schema": "/path/to/publisher/schema/layoutschema-en.rng",
-              "namespace": "urn:speedata.de:2009/publisher/en",
-              "rootElement": "Layout",
-              "fileNames": ["layout.xml"]
-            }
-          ]
+          "catalogs": ["/path/to/publisher/schema/catalog-schema-en.xml"]
         }
       }
     }
@@ -66,26 +75,83 @@ catalog:
 }
 ```
 
-Either mechanism alone is enough: catalogs map namespaces to schemas
-(`catalog-schema-de.xml` for German documentation), while language
-profiles add activation by root element, file name, or extension. A
-document can also pin its schema itself with
-`<?xml-model href="schema.rng"?>`, which takes precedence.
+### Other editors
 
-## Layout
+Configure your editor's LSP client to run the `xml-lsp` binary for XML
+files and pass the configuration shown below as
+`initializationOptions`.
 
-* `crates/xml-ast` — syntax tree, position mapping (UTF-16), namespaces
-* `crates/xml-parser` — error-tolerant parser with diagnostics
-* `crates/xml-schema` — schema model with RELAX NG frontend
-* `crates/xml-validation` — derivative-based validation engine
-* `crates/xml-languages` — language registry: activation and schema association
-* `crates/xml-completion` — schema-driven completion
-* `crates/xml-hover` — schema documentation under the cursor
-* `crates/xml-server` — LSP server (tower-lsp), binary `xml-lsp`
+## Telling the server about your schema
 
-The tests against the real speedata schemas look for them in
+Three mechanisms, in order of precedence:
+
+1. **`<?xml-model?>`** in the document itself (RELAX NG XML syntax):
+
+   ```xml
+   <?xml-model href="schema.rng"?>
+   ```
+
+2. **Language profiles** in the configuration — activation by
+   namespace, root element, file name, or extension:
+
+   ```json
+   {
+     "schema": {
+       "languages": [
+         {
+           "name": "speedata-layout",
+           "schema": "/path/to/publisher/schema/layoutschema-en.rng",
+           "namespace": "urn:speedata.de:2009/publisher/en",
+           "rootElement": "Layout",
+           "fileNames": ["layout.xml"]
+         }
+       ]
+     }
+   }
+   ```
+
+3. **OASIS XML catalogs** mapping a namespace to a schema — exactly
+   what speedata ships (`catalog-schema-en.xml`; use
+   `catalog-schema-de.xml` for German documentation):
+
+   ```json
+   { "schema": { "catalogs": ["/path/to/catalog-schema-en.xml"] } }
+   ```
+
+Relative paths resolve against the workspace root. Edited schemas are
+picked up automatically (mtime check) — no server restart needed.
+
+Further options: `"diagnostics": { "enable": true, "maxCount": 1000 }`.
+All options are also accepted via `workspace/didChangeConfiguration`,
+either at the top level or wrapped in `{ "xml": … }`.
+
+## Symbol navigation and formatter conventions
+
+Go-to-definition, rename, symbol completion, and per-element formatter
+behavior are driven by small annotations in the RELAX NG schema
+(namespace `urn:xml-lsp:annotations`), so any grammar can opt in
+without touching the server:
+
+```xml
+<attribute name="name"><lsp:defines symbol="color"/></attribute>
+<attribute name="color"><lsp:references symbol="color"/></attribute>
+```
+
+See [docs/schema-annotations.md](docs/schema-annotations.md) for the
+vocabulary and the migration guide for the speedata schemas.
+
+## Development
+
+```sh
+cargo test             # unit, integration, and snapshot tests
+cargo insta review     # approve changed diagnostics snapshots
+```
+
+The workspace is split into LSP-independent analysis crates and a thin
+server binding — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+the crate layout and [docs/ROADMAP.md](docs/ROADMAP.md) for the
+milestone plan.
+
+Tests against the real speedata schemas look for them in
 `SPEEDATA_SCHEMA_DIR` (default: `~/work/software/publisher/schema`) and
 are skipped if the directory is missing.
-
-The parser and analysis are deliberately LSP-free; all LSP features access
-only their internal APIs.

@@ -47,7 +47,11 @@ impl CompletionItem {
 pub fn complete(schema: &Schema, doc: &Document, text: &str, offset: usize) -> Vec<CompletionItem> {
     let mut validator = Validator::new(schema);
     match cursor_context(doc, text, offset) {
-        CursorContext::ElementName { container, replace } => {
+        CursorContext::ElementName {
+            container,
+            replace,
+            fresh,
+        } => {
             let expectations = validator.content_expectations(doc, text, container, offset);
             let mut items = Vec::new();
             for pattern in expectations.elements {
@@ -56,8 +60,14 @@ pub fn complete(schema: &Schema, doc: &Document, text: &str, offset: usize) -> V
                 };
                 for (ns, local) in concrete_names(&element.name) {
                     let label = qualified_label(doc, container, ns.as_deref(), &local);
-                    let mut item = CompletionItem::new(label, CompletionItemKind::Element, replace);
+                    let mut item =
+                        CompletionItem::new(label.clone(), CompletionItemKind::Element, replace);
                     item.documentation = element.documentation.clone();
+                    if fresh {
+                        let (insert, snippet) = element_skeleton(schema, pattern, &label, text);
+                        item.insert = insert;
+                        item.snippet = snippet;
+                    }
                     items.push(item);
                 }
             }
@@ -128,6 +138,87 @@ pub fn complete(schema: &Schema, doc: &Document, text: &str, offset: usize) -> V
 
         CursorContext::None => Vec::new(),
     }
+}
+
+/// Builds the full-tag insertion for a freshly typed element: required
+/// attributes pre-filled as tab stops, then either the end tag when the
+/// element takes content, or a self-closing tag. Content elements get
+/// an extra tab stop inside the start tag when the element has
+/// attributes: the cursor starts before the `>` for further attributes,
+/// Tab moves on into the content. For elements that can hold text the
+/// content stop is inline (`Foo$1>$0</Foo>`); element-only content
+/// expands as an indented block (`Foo$1>\n␣␣$0\n</Foo>`) — the snippet
+/// carries only relative indentation (one document-derived step),
+/// editors prepend the insertion line's own indentation to snippet
+/// lines. With optional attributes on an empty element the final
+/// cursor sits before the `/>`, otherwise after the tag. Returns
+/// `(plain insert, snippet)`; the snippet is `None` when it would
+/// contain no tab stops.
+fn element_skeleton(
+    schema: &Schema,
+    pattern: xml_schema::PatternId,
+    label: &str,
+    text: &str,
+) -> (String, Option<String>) {
+    let Some(element) = schema.element_pattern(pattern) else {
+        return (label.to_string(), None);
+    };
+    let required = schema.required_attributes(element.content);
+    let required_names: Vec<String> = required
+        .iter()
+        .filter_map(|&id| schema.attribute_pattern(id))
+        .filter_map(|attr| concrete_names(&attr.name).into_iter().next())
+        .map(|(_, local)| local)
+        .collect();
+    let attribute_count = schema.attributes(element.content).len();
+    let has_optional_attributes = attribute_count > required_names.len();
+    let has_content = schema.allows_content(element.content);
+
+    let mut insert = label.to_string();
+    let mut snippet = label.to_string();
+    let mut tab_stops = false;
+    let mut tab = 0;
+    for name in &required_names {
+        tab += 1;
+        insert.push_str(&format!(" {name}=\"\""));
+        snippet.push_str(&format!(" {name}=\"${{{tab}}}\""));
+        tab_stops = true;
+    }
+    if has_content {
+        insert.push_str(&format!("></{label}>"));
+        if attribute_count > 0 {
+            // A stop inside the start tag for (further) attributes.
+            tab += 1;
+            snippet.push_str(&format!("${{{tab}}}"));
+        }
+        if schema.allows_text(element.content) {
+            snippet.push_str(&format!(">$0</{label}>"));
+        } else {
+            let unit = infer_indent_unit(text);
+            snippet.push_str(&format!(">\n{unit}$0\n</{label}>"));
+        }
+        tab_stops = true;
+    } else if has_optional_attributes {
+        insert.push_str(" />");
+        snippet.push_str(" $0/>");
+        tab_stops = true;
+    } else {
+        insert.push_str(" />");
+        snippet.push_str(" />");
+    }
+    (insert, tab_stops.then_some(snippet))
+}
+
+/// The document's indentation step: the shortest non-empty leading
+/// whitespace of any line; two spaces when nothing is indented yet.
+fn infer_indent_unit(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| &line[..line.len() - line.trim_start().len()])
+        .filter(|ws| !ws.is_empty())
+        .min_by_key(|ws| ws.len())
+        .unwrap_or("  ")
+        .to_string()
 }
 
 /// Expands a name class into its concrete names; wildcards cannot be

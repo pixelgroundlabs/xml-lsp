@@ -939,6 +939,7 @@ dependencies = [
  "xml-hover",
  "xml-languages",
  "xml-parser",
+ "xml-schema",
  "xml-validation",
 ]
 

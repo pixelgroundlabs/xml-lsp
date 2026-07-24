@@ -84,12 +84,58 @@ pub struct DatatypeName {
     pub name: String,
 }
 
+/// Whether a symbol annotation marks a definition or a reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolRole {
+    Definition,
+    Reference,
+}
+
+/// How an annotated attribute value carries a symbol name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ValueForm {
+    /// The attribute value is the name itself.
+    #[default]
+    Literal,
+    /// The value is an XPath expression; only a quoted string literal
+    /// (`'name'`) carries a name.
+    XPathString,
+    /// The value is an XPath expression; only a plain variable
+    /// reference (`$name`) carries a name.
+    XPathVariable,
+}
+
+/// An `lsp:defines` / `lsp:references` annotation on an attribute
+/// pattern (namespace `urn:xml-lsp:annotations`): this attribute
+/// defines or references a named symbol of the given kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolAnnotation {
+    pub role: SymbolRole,
+    /// Symbol kind, the grouping key (e.g. "color", "fontfile").
+    pub kind: String,
+    pub form: ValueForm,
+}
+
+/// An `lsp:format` annotation on an element pattern: how the formatter
+/// treats this element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FormatHints {
+    /// Content is emitted verbatim (whitespace preserved).
+    pub preserve: bool,
+    /// Direct children are separated into blank-line groups.
+    pub blank_lines: bool,
+    /// Below this element, text-only elements stay on a single line.
+    pub inline: bool,
+}
+
 /// `<element>` pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElementPattern {
     pub name: NameClass,
     pub content: PatternId,
     pub documentation: Option<String>,
+    /// Formatting hints from `lsp:format`, if annotated.
+    pub format: Option<FormatHints>,
 }
 
 /// `<attribute>` pattern.
@@ -98,6 +144,8 @@ pub struct AttributePattern {
     pub name: NameClass,
     pub content: PatternId,
     pub documentation: Option<String>,
+    /// Symbol site from `lsp:defines`/`lsp:references`, if annotated.
+    pub symbol: Option<SymbolAnnotation>,
 }
 
 /// `<value>` pattern: a fixed, allowed value (typically part of an
@@ -223,6 +271,12 @@ impl Schema {
 
     pub fn pattern_count(&self) -> usize {
         self.patterns.len()
+    }
+
+    /// All pattern ids in the arena (for schema-wide scans, e.g.
+    /// collecting annotated symbol sites).
+    pub fn pattern_ids(&self) -> impl Iterator<Item = PatternId> {
+        (0..self.patterns.len() as u32).map(PatternId)
     }
 
     pub fn define(&self, id: DefineId) -> &Define {

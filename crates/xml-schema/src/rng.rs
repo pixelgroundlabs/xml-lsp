@@ -17,14 +17,17 @@ use xml_ast::{unescape, Document, NodeId, NodeKind, NsUri, QName, TextRange};
 
 use crate::diagnostics::{SchemaDiagnostic, SchemaDiagnosticCode};
 use crate::model::{
-    AttributePattern, DataPattern, DatatypeName, ElementPattern, NameClass, Pattern, PatternId,
-    Schema, ValuePattern,
+    AttributePattern, DataPattern, DatatypeName, ElementPattern, FormatHints, NameClass, Pattern,
+    PatternId, Schema, SymbolAnnotation, SymbolRole, ValueForm, ValuePattern,
 };
 
 /// Namespace of the RELAX NG XML syntax.
 pub const RNG_NAMESPACE: &str = "http://relaxng.org/ns/structure/1.0";
 /// Namespace of the RELAX NG compatibility annotations (`a:documentation`).
 pub const RNG_DOC_NAMESPACE: &str = "http://relaxng.org/ns/compatibility/annotations/1.0";
+/// Namespace of xml-lsp's own annotations (`lsp:defines`,
+/// `lsp:references`, `lsp:format`) — see docs/schema-annotations.md.
+pub const LSP_ANNOTATION_NAMESPACE: &str = "urn:xml-lsp:annotations";
 
 /// Result of loading a schema: the model plus all diagnostics. On fatal
 /// problems the schema falls back to a `NotAllowed` start pattern.
@@ -335,11 +338,13 @@ impl<'a> Loader<'a> {
                     ),
                 };
                 let documentation = self.collect_documentation(node);
+                let format = self.collect_format_hints(node);
                 self.schema.alloc(
                     Pattern::Element(ElementPattern {
                         name,
                         content,
                         documentation,
+                        format,
                     }),
                     range,
                 )
@@ -358,11 +363,13 @@ impl<'a> Loader<'a> {
                     }
                 };
                 let documentation = self.collect_documentation(node);
+                let symbol = self.collect_symbol_annotation(node);
                 self.schema.alloc(
                     Pattern::Attribute(AttributePattern {
                         name,
                         content,
                         documentation,
+                        symbol,
                     }),
                     range,
                 )
@@ -809,6 +816,116 @@ impl<'a> Loader<'a> {
         } else {
             Some(parts.join("\n\n"))
         }
+    }
+
+    /// Collects an `lsp:defines`/`lsp:references` annotation from the
+    /// children of an attribute pattern. The first one wins; malformed
+    /// annotations are reported and skipped.
+    fn collect_symbol_annotation(&mut self, node: NodeId) -> Option<SymbolAnnotation> {
+        let mut result = None;
+        for &child in self.doc.children(node) {
+            let Some(el) = self.doc.element(child) else {
+                continue;
+            };
+            if el.name.namespace.as_deref() != Some(LSP_ANNOTATION_NAMESPACE) {
+                continue;
+            }
+            let range = self.doc.range(child);
+            let role = match el.name.local.as_str() {
+                "defines" => SymbolRole::Definition,
+                "references" => SymbolRole::Reference,
+                "format" => {
+                    self.warning(
+                        range,
+                        SchemaDiagnosticCode::Annotation,
+                        "lsp:format belongs on an element pattern, not an attribute",
+                    );
+                    continue;
+                }
+                other => {
+                    self.warning(
+                        range,
+                        SchemaDiagnosticCode::Annotation,
+                        format!("unknown annotation lsp:{other}"),
+                    );
+                    continue;
+                }
+            };
+            let Some(kind) = el
+                .attribute(None, "symbol")
+                .map(|attr| attr.value.trim().to_string())
+                .filter(|kind| !kind.is_empty())
+            else {
+                self.warning(
+                    range,
+                    SchemaDiagnosticCode::Annotation,
+                    format!("lsp:{} needs a symbol attribute", el.name.local),
+                );
+                continue;
+            };
+            let form = match el.attribute(None, "form").map(|attr| attr.value.trim()) {
+                None | Some("literal") => ValueForm::Literal,
+                Some("xpath-string") => ValueForm::XPathString,
+                Some("xpath-variable") => ValueForm::XPathVariable,
+                Some(other) => {
+                    self.warning(
+                        range,
+                        SchemaDiagnosticCode::Annotation,
+                        format!("unknown annotation form `{other}` (expected literal, xpath-string, or xpath-variable)"),
+                    );
+                    ValueForm::Literal
+                }
+            };
+            if result.is_none() {
+                result = Some(SymbolAnnotation { role, kind, form });
+            } else {
+                self.warning(
+                    range,
+                    SchemaDiagnosticCode::Annotation,
+                    "more than one symbol annotation on this attribute; the first one wins",
+                );
+            }
+        }
+        result
+    }
+
+    /// Collects an `lsp:format` annotation from the children of an
+    /// element pattern.
+    fn collect_format_hints(&mut self, node: NodeId) -> Option<FormatHints> {
+        let mut result: Option<FormatHints> = None;
+        for &child in self.doc.children(node) {
+            let Some(el) = self.doc.element(child) else {
+                continue;
+            };
+            if el.name.namespace.as_deref() != Some(LSP_ANNOTATION_NAMESPACE)
+                || el.name.local != "format"
+            {
+                continue;
+            }
+            let truthy = |name: &str| {
+                el.attribute(None, name)
+                    .is_some_and(|attr| attr.value.trim() == "true")
+            };
+            let hints = FormatHints {
+                preserve: truthy("preserve"),
+                blank_lines: truthy("blank-lines"),
+                inline: truthy("inline"),
+            };
+            if hints == FormatHints::default() {
+                self.warning(
+                    self.doc.range(child),
+                    SchemaDiagnosticCode::Annotation,
+                    "lsp:format without any hint (preserve, blank-lines, inline)",
+                );
+                continue;
+            }
+            result = Some(result.map_or(hints, |prev| FormatHints {
+                preserve: prev.preserve || hints.preserve,
+                blank_lines: prev.blank_lines || hints.blank_lines,
+                inline: prev.inline || hints.inline,
+            }));
+        }
+        result
     }
 
     fn error(&mut self, range: TextRange, code: SchemaDiagnosticCode, message: impl Into<String>) {
