@@ -1,0 +1,7 @@
+---
+source: crates/xml-hover/tests/hover_tests.rs
+expression: "render(r#\"<form action=\"/x\" method=\"g|et\"></form>\"#)"
+---
+**`get`**
+
+Read-only request.

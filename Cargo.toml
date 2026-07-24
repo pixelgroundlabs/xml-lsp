@@ -17,6 +17,7 @@ xml-schema = { path = "crates/xml-schema" }
 xml-validation = { path = "crates/xml-validation" }
 xml-languages = { path = "crates/xml-languages" }
 xml-completion = { path = "crates/xml-completion" }
+xml-hover = { path = "crates/xml-hover" }
 
 # External dependencies
 quick-xml = "0.36"

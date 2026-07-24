@@ -17,6 +17,7 @@ xml-parser.workspace = true
 xml-validation.workspace = true
 xml-languages.workspace = true
 xml-completion.workspace = true
+xml-hover.workspace = true
 tower-lsp.workspace = true
 tokio.workspace = true
 serde.workspace = true

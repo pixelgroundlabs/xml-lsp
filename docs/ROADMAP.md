@@ -30,13 +30,12 @@ One milestone = one squash commit on `main`.
   completion (`xml-completion`) for elements, attributes (required
   first, present ones filtered), attribute values, and closing tags;
   snippet support; schema documentation on every item.
+- **M6 — Hover**: schema documentation under the cursor (element,
+  attribute, value) as Markdown with allowed-value lists
+  (`xml-hover`).
 
 ## Next
 
-- **M6 — Hover**: documentation of the element/attribute/value under
-  the cursor as Markdown (language variant follows the configured
-  schema); allowed values as additional info. The required queries
-  (`element_pattern_at`, `attribute_pattern_at`) already exist.
 - **M7 — Navigation & comfort**: document symbols, folding ranges,
   go-to-definition/references (IDs, Marks/links via per-language
   extension points), rename, quick fixes (close tag, quote attribute),

@@ -1,0 +1,9 @@
+---
+source: crates/xml-hover/tests/hover_tests.rs
+expression: "render(r#\"<form action=\"/x\" met|hod=\"get\"></form>\"#)"
+---
+**`method`**
+
+The HTTP method.
+
+Allowed values: `get`, `post`

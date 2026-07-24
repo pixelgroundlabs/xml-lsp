@@ -1,8 +1,8 @@
 # Architecture
 
-Status: milestone 5 — schema-driven completion, on top of language
-activation (M4), the validation engine (M3), the schema model (M2), and
-the LSP server with parsing and diagnostics (M1).
+Status: milestone 6 — hover documentation, on top of completion (M5),
+language activation (M4), the validation engine (M3), the schema model
+(M2), and the LSP server with parsing and diagnostics (M1).
 
 ## Overview
 
@@ -212,6 +212,17 @@ Schema-driven completion, independent of LSP types.
 The same expectation API (`content_expectations`,
 `attribute_expectations`, `attribute_pattern_at`, `element_pattern_at`
 in `xml-validation`) is the basis for hover in the next milestone.
+
+### `xml-hover`
+
+Schema documentation for the symbol under the cursor, independent of
+LSP types. Targets are element names (start *and* end tag), attribute
+names, and attribute values. Content is the `a:documentation` from the
+schema as Markdown; attribute hovers additionally list the allowed
+values, and hovering an enumeration value shows that value's own
+documentation when it has one. Lookup reuses the expectation API from
+`xml-validation` (`element_pattern_at`, `attribute_pattern_at`), so the
+result respects the cursor's context in the content model.
 
 ### `xml-server`
 

@@ -1,0 +1,7 @@
+---
+source: crates/xml-hover/tests/hover_tests.rs
+expression: "render(r#\"<fo|rm action=\"/x\"></form>\"#)"
+---
+**`<form>`**
+
+A simple form.

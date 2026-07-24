@@ -9,10 +9,10 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
     CompletionTextEdit, Diagnostic, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, Documentation, InitializeParams,
-    InitializeResult, InitializedParams, InsertTextFormat, MarkupContent, MarkupKind, MessageType,
-    Position, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit, Url,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, Documentation, Hover, HoverContents,
+    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
+    InsertTextFormat, MarkupContent, MarkupKind, MessageType, Position, Range, ServerCapabilities,
+    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 use xml_ast::LineCol;
@@ -226,6 +226,50 @@ impl Backend {
         )
     }
 
+    /// Computes hover information at a position, if a schema applies.
+    pub fn compute_hover(&self, uri: &Url, position: Position) -> Option<Hover> {
+        let doc = self.store.get(uri)?;
+        let offset = doc.line_index.offset(
+            &doc.text,
+            LineCol {
+                line: position.line,
+                col: position.character,
+            },
+        );
+        let path = uri.to_file_path().ok();
+        let resolved = self
+            .registry
+            .read()
+            .expect("registry lock is never poisoned")
+            .resolve(&doc.parse.document, &doc.text, path.as_deref())?;
+        let loaded = self
+            .schemas
+            .lock()
+            .expect("schema lock is never poisoned")
+            .load(&resolved.schema_path)
+            .ok()?;
+
+        let info = xml_hover::hover(&loaded.schema, &doc.parse.document, &doc.text, offset)?;
+        let start = doc.line_index.line_col(&doc.text, info.range.start);
+        let end = doc.line_index.line_col(&doc.text, info.range.end);
+        Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: info.markdown,
+            }),
+            range: Some(Range {
+                start: Position {
+                    line: start.line,
+                    character: start.col,
+                },
+                end: Position {
+                    line: end.line,
+                    character: end.col,
+                },
+            }),
+        })
+    }
+
     /// Human-readable schema association of a document, for the log.
     fn describe_association(&self, uri: &Url) -> String {
         let Some(doc) = self.store.get(uri) else {
@@ -319,6 +363,7 @@ impl LanguageServer for Backend {
                     trigger_characters: Some(["<", "/", "\"", "'"].map(str::to_string).to_vec()),
                     ..CompletionOptions::default()
                 }),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -387,6 +432,12 @@ impl LanguageServer for Backend {
         Ok(self
             .compute_completions(&uri, position)
             .map(CompletionResponse::Array))
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        Ok(self.compute_hover(&uri, position))
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
