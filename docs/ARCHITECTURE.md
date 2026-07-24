@@ -1,6 +1,7 @@
 # Architecture
 
-Status: milestone 6 — hover documentation, on top of completion (M5),
+Status: milestone 7 (in progress) — document symbols and folding
+ranges, after hover (M6), completion (M5),
 language activation (M4), the validation engine (M3), the schema model
 (M2), and the LSP server with parsing and diagnostics (M1).
 
@@ -237,6 +238,11 @@ The LSP server itself (tower-lsp, LSP 3.17):
 * **`diagnostics`** — pure translation layer `ParseDiagnostic` →
   `lsp_types::Diagnostic` (severity, code, source `xml`, positions via
   `LineIndex`).
+* **`symbols`**/**`folding`** — document outline (element hierarchy
+  with identifying attributes such as `name`/`id`/`element` as detail)
+  and folding ranges (multi-line elements fold up to the line before
+  their end tag; comments and CDATA fold entirely). Both are pure AST
+  consumers and work without a schema.
 * **`config`** — `ServerConfig`, read from `initializationOptions` and
   `workspace/didChangeConfiguration` (accepts `{ "xml": … }` or the
   options at the top level). Currently: diagnostics on/off and a per-

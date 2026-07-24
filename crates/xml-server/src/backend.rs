@@ -9,10 +9,12 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
     CompletionTextEdit, Diagnostic, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, Documentation, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    InsertTextFormat, MarkupContent, MarkupKind, MessageType, Position, Range, ServerCapabilities,
-    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
+    DocumentSymbolResponse, Documentation, FoldingRange, FoldingRangeParams,
+    FoldingRangeProviderCapability, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, InsertTextFormat, MarkupContent,
+    MarkupKind, MessageType, OneOf, Position, Range, ServerCapabilities, ServerInfo,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 use xml_ast::LineCol;
@@ -364,6 +366,8 @@ impl LanguageServer for Backend {
                     ..CompletionOptions::default()
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -438,6 +442,23 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
         Ok(self.compute_hover(&uri, position))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let symbols = self.store.get(&params.text_document.uri).map(|doc| {
+            crate::symbols::document_symbols(&doc.parse.document, &doc.text, &doc.line_index)
+        });
+        Ok(symbols.map(DocumentSymbolResponse::Nested))
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        let ranges = self.store.get(&params.text_document.uri).map(|doc| {
+            crate::folding::folding_ranges(&doc.parse.document, &doc.text, &doc.line_index)
+        });
+        Ok(ranges)
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {

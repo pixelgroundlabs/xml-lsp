@@ -6,7 +6,9 @@ editor-independent — the server works with any LSP client.
 
 ## Status
 
-Milestone 6: hover — schema documentation for the element, attribute,
+Milestone 7 (in progress): document symbols (hierarchical outline with
+identifying attributes as details) and folding ranges (elements,
+comments, CDATA). Milestone 6: hover — schema documentation for the element, attribute,
 or attribute value under the cursor as Markdown, including the allowed
 values of enumerated attributes; the documentation language follows the
 configured schema variant. Before that, milestone 5: schema-driven

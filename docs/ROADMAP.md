@@ -36,10 +36,10 @@ One milestone = one squash commit on `main`.
 
 ## Next
 
-- **M7 — Navigation & comfort**: document symbols, folding ranges,
-  go-to-definition/references (IDs, Marks/links via per-language
-  extension points), rename, quick fixes (close tag, quote attribute),
-  semantic tokens, inlay hints.
+- **M7 — Navigation & comfort** (in progress): document symbols and
+  folding ranges are done; still open: go-to-definition/references
+  (IDs, Marks/links via per-language extension points), rename, quick
+  fixes (close tag, quote attribute), semantic tokens, inlay hints.
 - **M8 — Zed integration**: mostly done early (see `editors/zed`):
   a dev extension registers the `xml-lsp` binary, configurable via
   `lsp.xml-lsp` settings. Remaining: publish to the Zed extension

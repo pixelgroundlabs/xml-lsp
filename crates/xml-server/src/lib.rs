@@ -8,5 +8,7 @@ pub mod backend;
 pub mod config;
 pub mod diagnostics;
 pub mod documents;
+pub mod folding;
+pub mod symbols;
 
 pub use backend::Backend;
