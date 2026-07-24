@@ -2,3 +2,5 @@
 .claude/settings.local.json
 *.pending-snap
 /editors/zed/target
+/editors/zed/extension.wasm
+/editors/zed/grammars

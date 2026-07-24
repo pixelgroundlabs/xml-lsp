@@ -5,6 +5,12 @@ language servers that an extension registers — pointing `settings.json`
 at an arbitrary binary is not enough (that is why Zed flags
 `"xml-lsp"` under `lsp` as "not allowed" without this extension).
 
+The server binary is resolved in this order: `lsp.xml-lsp.binary.path`
+from the settings, `xml-lsp` on PATH, then an automatic download of
+the latest GitHub release for your platform (cached, re-used until a
+new release appears). Registry installs therefore need no manual
+binary setup — only the schema configuration below.
+
 ## Installation (dev extension)
 
 1. Build the language server:

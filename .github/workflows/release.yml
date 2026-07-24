@@ -1,0 +1,55 @@
+# Builds the xml-lsp binaries for a tagged release and attaches them to
+# the GitHub release. Asset names must match what the Zed extension
+# expects: xml-lsp-{tag}-{target}.tar.gz (zip on Windows).
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14, target: aarch64-apple-darwin }
+          - { runner: macos-14, target: x86_64-apple-darwin }
+          - { runner: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { runner: windows-2022, target: x86_64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p xml-server
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          tar czf xml-lsp-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
+            -C target/${{ matrix.target }}/release xml-lsp
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/xml-lsp.exe" `
+            -DestinationPath "xml-lsp-${{ github.ref_name }}-${{ matrix.target }}.zip"
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "${{ github.ref_name }}" --verify-tag --generate-notes || true
+          gh release upload "${{ github.ref_name }}" \
+            xml-lsp-${{ github.ref_name }}-${{ matrix.target }}.*
