@@ -109,6 +109,14 @@ impl LanguageRegistry {
         self.profiles.is_empty() && self.catalog.is_empty()
     }
 
+    pub fn profile_count(&self) -> usize {
+        self.profiles.len()
+    }
+
+    pub fn catalog_count(&self) -> usize {
+        self.catalog.len()
+    }
+
     /// Resolves the schema for a document. `doc_path` is the document's
     /// file location (for relative `xml-model` hrefs and file-name rules).
     pub fn resolve(

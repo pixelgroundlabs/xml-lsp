@@ -226,6 +226,27 @@ impl Backend {
         )
     }
 
+    /// Human-readable schema association of a document, for the log.
+    fn describe_association(&self, uri: &Url) -> String {
+        let Some(doc) = self.store.get(uri) else {
+            return format!("{uri}: unknown document");
+        };
+        let path = uri.to_file_path().ok();
+        let resolved = self
+            .registry
+            .read()
+            .expect("registry lock is never poisoned")
+            .resolve(&doc.parse.document, &doc.text, path.as_deref());
+        match resolved {
+            Some(resolved) => format!(
+                "{uri}: schema {} ({:?})",
+                resolved.schema_path.display(),
+                resolved.origin
+            ),
+            None => format!("{uri}: no schema associated — well-formedness checks only"),
+        }
+    }
+
     /// Publishes the current diagnostics of a document. The computation
     /// happens before the `await` so no cache reference is held across an
     /// await point.
@@ -308,8 +329,21 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _params: InitializedParams) {
+        let (profiles, catalog_entries) = {
+            let registry = self
+                .registry
+                .read()
+                .expect("registry lock is never poisoned");
+            (registry.profile_count(), registry.catalog_count())
+        };
         self.client
-            .log_message(MessageType::INFO, "xml-lsp ready")
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "xml-lsp ready — {profiles} language profile(s), \
+                     {catalog_entries} catalog entrie(s)"
+                ),
+            )
             .await;
         self.flush_startup_messages().await;
     }
@@ -321,6 +355,12 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let doc = params.text_document;
         self.store.open(doc.uri.clone(), doc.version, doc.text);
+        // One line per opened document showing which schema (if any)
+        // applies — the first thing to look for when nothing happens.
+        let association = self.describe_association(&doc.uri);
+        self.client
+            .log_message(MessageType::INFO, association)
+            .await;
         self.publish_diagnostics(&doc.uri).await;
     }
 
@@ -357,6 +397,17 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        // Clients (Zed among them) send null or empty settings right
+        // after startup when nothing is configured in their `settings`
+        // section. That must not wipe the configuration received via
+        // initializationOptions.
+        let meaningful = match &params.settings {
+            serde_json::Value::Object(map) => !map.is_empty(),
+            _ => false,
+        };
+        if !meaningful {
+            return;
+        }
         self.set_config(ServerConfig::from_json(&params.settings));
         for warning in self.rebuild_registry() {
             self.client.log_message(MessageType::WARNING, warning).await;

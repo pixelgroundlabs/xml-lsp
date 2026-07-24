@@ -153,6 +153,52 @@ async fn no_schema_means_parser_diagnostics_only() {
 }
 
 #[tokio::test]
+async fn empty_did_change_configuration_keeps_settings() {
+    // Zed sends `workspace/didChangeConfiguration` with empty settings
+    // right after startup; that must not wipe the configuration from
+    // initializationOptions (regression test).
+    use tower_lsp::lsp_types::DidChangeConfigurationParams;
+
+    let dir = setup_dir("keep-config");
+    let options = json!({
+        "schema": { "catalogs": [dir.join("catalog.xml").to_str().unwrap()] }
+    });
+    let (service, uri) = initialized_backend(options).await;
+
+    service
+        .inner()
+        .did_change_configuration(DidChangeConfigurationParams {
+            settings: json!({}),
+        })
+        .await;
+    service
+        .inner()
+        .did_change_configuration(DidChangeConfigurationParams {
+            settings: serde_json::Value::Null,
+        })
+        .await;
+
+    open(
+        &service,
+        &uri,
+        r#"<notes xmlns="urn:test:notes"><bad/></notes>"#,
+    )
+    .await;
+    let (_, diags) = service.inner().compute_diagnostics(&uri).unwrap();
+    assert_eq!(diags.len(), 1, "validation must still run: {diags:?}");
+
+    // A meaningful configuration change still applies.
+    service
+        .inner()
+        .did_change_configuration(DidChangeConfigurationParams {
+            settings: json!({ "diagnostics": { "enable": false } }),
+        })
+        .await;
+    let (_, diags) = service.inner().compute_diagnostics(&uri).unwrap();
+    assert!(diags.is_empty(), "diagnostics disabled: {diags:?}");
+}
+
+#[tokio::test]
 async fn xml_model_pi_activates_schema() {
     let dir = setup_dir("xmlmodel");
     let (service, _) = initialized_backend(json!({})).await;
