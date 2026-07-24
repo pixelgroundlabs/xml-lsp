@@ -33,13 +33,18 @@ One milestone = one squash commit on `main`.
 - **M6 — Hover**: schema documentation under the cursor (element,
   attribute, value) as Markdown with allowed-value lists
   (`xml-hover`).
+- **M7 — Navigation & comfort**: document symbols and folding ranges;
+  per-language reference rules (`xml-languages::references`) with
+  built-in speedata symbols (colors, font families, text formats,
+  graphics, matters, areas, groups, page types, marks/links) backing
+  go-to-definition, find-references, and rename (symbols and tag
+  pairs); quick fixes for parser diagnostics (close element, remove
+  stray end tag, quote/terminate/add attribute values); semantic
+  tokens with symbol-aware value highlighting; inlay hints at distant
+  end tags.
 
 ## Next
 
-- **M7 — Navigation & comfort** (in progress): document symbols and
-  folding ranges are done; still open: go-to-definition/references
-  (IDs, Marks/links via per-language extension points), rename, quick
-  fixes (close tag, quote attribute), semantic tokens, inlay hints.
 - **M8 — Zed integration**: mostly done early (see `editors/zed`):
   a dev extension registers the `xml-lsp` binary, configurable via
   `lsp.xml-lsp` settings. Remaining: publish to the Zed extension

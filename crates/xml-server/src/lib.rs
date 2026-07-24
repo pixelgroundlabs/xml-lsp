@@ -5,10 +5,15 @@
 //! — never the other way around.
 
 pub mod backend;
+pub mod code_actions;
 pub mod config;
 pub mod diagnostics;
 pub mod documents;
 pub mod folding;
+pub mod inlay_hints;
+pub mod navigation;
+pub mod rename;
+pub mod semantic_tokens;
 pub mod symbols;
 
 pub use backend::Backend;

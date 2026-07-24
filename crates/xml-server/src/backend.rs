@@ -7,14 +7,20 @@ use std::sync::{Mutex, RwLock};
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
-    CompletionTextEdit, Diagnostic, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
-    DocumentSymbolResponse, Documentation, FoldingRange, FoldingRangeParams,
-    FoldingRangeProviderCapability, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, InsertTextFormat, MarkupContent,
-    MarkupKind, MessageType, OneOf, Position, Range, ServerCapabilities, ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
+    CodeActionProviderCapability, CodeActionResponse, CompletionItem, CompletionItemKind,
+    CompletionOptions, CompletionParams, CompletionResponse, CompletionTextEdit, Diagnostic,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, Documentation,
+    FoldingRange, FoldingRangeParams, FoldingRangeProviderCapability, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams,
+    InsertTextFormat, Location, MarkupContent, MarkupKind, MessageType, OneOf, Position,
+    PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url, WorkDoneProgressOptions,
+    WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 use xml_ast::LineCol;
@@ -272,6 +278,148 @@ impl Backend {
         })
     }
 
+    /// Definition locations for the symbol at a position.
+    pub fn compute_definitions(&self, uri: &Url, position: Position) -> Option<Vec<Location>> {
+        let doc = self.store.get(uri)?;
+        let offset = doc.line_index.offset(
+            &doc.text,
+            LineCol {
+                line: position.line,
+                col: position.character,
+            },
+        );
+        let ranges = crate::navigation::definitions(&doc.parse.document, &doc.text, offset);
+        Some(to_locations(uri, &doc.text, &doc.line_index, ranges))
+    }
+
+    /// All occurrence locations for the symbol at a position.
+    pub fn compute_references(
+        &self,
+        uri: &Url,
+        position: Position,
+        include_definitions: bool,
+    ) -> Option<Vec<Location>> {
+        let doc = self.store.get(uri)?;
+        let offset = doc.line_index.offset(
+            &doc.text,
+            LineCol {
+                line: position.line,
+                col: position.character,
+            },
+        );
+        let ranges = crate::navigation::references(
+            &doc.parse.document,
+            &doc.text,
+            offset,
+            include_definitions,
+        );
+        Some(to_locations(uri, &doc.text, &doc.line_index, ranges))
+    }
+
+    /// The renameable range and placeholder at a position.
+    pub fn compute_prepare_rename(
+        &self,
+        uri: &Url,
+        position: Position,
+    ) -> Option<PrepareRenameResponse> {
+        let doc = self.store.get(uri)?;
+        let offset = doc.line_index.offset(
+            &doc.text,
+            LineCol {
+                line: position.line,
+                col: position.character,
+            },
+        );
+        let target = crate::rename::prepare(&doc.parse.document, &doc.text, offset)?;
+        Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: to_lsp_range(&doc.text, &doc.line_index, target.range),
+            placeholder: target.text,
+        })
+    }
+
+    /// The workspace edit for a rename at a position.
+    pub fn compute_rename(
+        &self,
+        uri: &Url,
+        position: Position,
+        new_name: &str,
+    ) -> Option<WorkspaceEdit> {
+        let doc = self.store.get(uri)?;
+        let offset = doc.line_index.offset(
+            &doc.text,
+            LineCol {
+                line: position.line,
+                col: position.character,
+            },
+        );
+        let edits = crate::rename::rename(&doc.parse.document, &doc.text, offset, new_name)?;
+        let edits = edits
+            .into_iter()
+            .map(|(range, new_text)| TextEdit {
+                range: to_lsp_range(&doc.text, &doc.line_index, range),
+                new_text,
+            })
+            .collect();
+        let mut changes = std::collections::HashMap::new();
+        changes.insert(uri.clone(), edits);
+        Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..WorkspaceEdit::default()
+        })
+    }
+
+    /// Quick fixes for parser diagnostics in a range.
+    pub fn compute_code_actions(&self, uri: &Url, range: Range) -> Option<CodeActionResponse> {
+        let doc = self.store.get(uri)?;
+        let to_offset = |position: Position| {
+            doc.line_index.offset(
+                &doc.text,
+                LineCol {
+                    line: position.line,
+                    col: position.character,
+                },
+            )
+        };
+        let range = xml_ast::TextRange::new(to_offset(range.start), to_offset(range.end));
+        let fixes = crate::code_actions::quick_fixes(
+            &doc.parse.document,
+            &doc.text,
+            &doc.parse.diagnostics,
+            range,
+        );
+        let actions = fixes
+            .into_iter()
+            .map(|fix| {
+                let diagnostic = &doc.parse.diagnostics[fix.diagnostic];
+                let edits = fix
+                    .edits
+                    .into_iter()
+                    .map(|(range, new_text)| TextEdit {
+                        range: to_lsp_range(&doc.text, &doc.line_index, range),
+                        new_text,
+                    })
+                    .collect();
+                let mut changes = std::collections::HashMap::new();
+                changes.insert(uri.clone(), edits);
+                CodeActionOrCommand::CodeAction(CodeAction {
+                    title: fix.title,
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(parse_to_lsp(
+                        &doc.text,
+                        &doc.line_index,
+                        std::slice::from_ref(diagnostic),
+                    )),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(changes),
+                        ..WorkspaceEdit::default()
+                    }),
+                    ..CodeAction::default()
+                })
+            })
+            .collect();
+        Some(actions)
+    }
+
     /// Human-readable schema association of a document, for the log.
     fn describe_association(&self, uri: &Url) -> String {
         let Some(doc) = self.store.get(uri) else {
@@ -368,6 +516,23 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                })),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: crate::semantic_tokens::legend(),
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            ..SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
                 ..ServerCapabilities::default()
             },
             server_info: Some(ServerInfo {
@@ -444,6 +609,82 @@ impl LanguageServer for Backend {
         Ok(self.compute_hover(&uri, position))
     }
 
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let locations = self.compute_definitions(&uri, position).unwrap_or_default();
+        Ok(match locations.len() {
+            0 => None,
+            1 => Some(GotoDefinitionResponse::Scalar(
+                locations.into_iter().next().expect("length checked"),
+            )),
+            _ => Some(GotoDefinitionResponse::Array(locations)),
+        })
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let include_definitions = params.context.include_declaration;
+        let locations = self
+            .compute_references(&uri, position, include_definitions)
+            .unwrap_or_default();
+        Ok((!locations.is_empty()).then_some(locations))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let hints = self.store.get(&params.text_document.uri).map(|doc| {
+            let to_offset = |position: Position| {
+                doc.line_index.offset(
+                    &doc.text,
+                    LineCol {
+                        line: position.line,
+                        col: position.character,
+                    },
+                )
+            };
+            let range =
+                xml_ast::TextRange::new(to_offset(params.range.start), to_offset(params.range.end));
+            crate::inlay_hints::inlay_hints(&doc.parse.document, &doc.text, &doc.line_index, range)
+        });
+        Ok(hints)
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let tokens = self.store.get(&params.text_document.uri).map(|doc| {
+            crate::semantic_tokens::semantic_tokens(&doc.parse.document, &doc.text, &doc.line_index)
+        });
+        Ok(tokens.map(|data| {
+            SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data,
+            })
+        }))
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        Ok(self.compute_code_actions(&params.text_document.uri, params.range))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        Ok(self.compute_prepare_rename(&params.text_document.uri, params.position))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        Ok(self.compute_rename(&uri, position, &params.new_name))
+    }
+
     async fn document_symbol(
         &self,
         params: DocumentSymbolParams,
@@ -490,6 +731,38 @@ impl LanguageServer for Backend {
             self.publish_diagnostics(&uri).await;
         }
     }
+}
+
+/// Converts a byte range to an LSP range.
+fn to_lsp_range(text: &str, line_index: &xml_ast::LineIndex, range: xml_ast::TextRange) -> Range {
+    let start = line_index.line_col(text, range.start);
+    let end = line_index.line_col(text, range.end);
+    Range {
+        start: Position {
+            line: start.line,
+            character: start.col,
+        },
+        end: Position {
+            line: end.line,
+            character: end.col,
+        },
+    }
+}
+
+/// Converts byte ranges in one document to LSP locations.
+fn to_locations(
+    uri: &Url,
+    text: &str,
+    line_index: &xml_ast::LineIndex,
+    ranges: Vec<xml_ast::TextRange>,
+) -> Vec<Location> {
+    ranges
+        .into_iter()
+        .map(|range| Location {
+            uri: uri.clone(),
+            range: to_lsp_range(text, line_index, range),
+        })
+        .collect()
 }
 
 /// Maps an editor-agnostic completion item to the LSP shape.

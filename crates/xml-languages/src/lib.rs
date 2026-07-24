@@ -14,11 +14,16 @@
 //! resolved schema files, reloading them when they change on disk.
 
 mod catalog;
+mod references;
 mod registry;
 mod repository;
 mod xml_model;
 
 pub use catalog::CatalogError;
+pub use references::{
+    reference_rules_for, DefinitionSite, ReferenceRules, ReferenceSite, SymbolIndex,
+    SymbolOccurrence, SymbolRole, SymbolRule, ValueForm,
+};
 pub use registry::{
     Activation, LanguageProfile, LanguageRegistry, ResolutionOrigin, ResolvedSchema,
 };

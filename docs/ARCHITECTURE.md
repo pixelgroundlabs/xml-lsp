@@ -1,9 +1,10 @@
 # Architecture
 
-Status: milestone 7 (in progress) — document symbols and folding
-ranges, after hover (M6), completion (M5),
-language activation (M4), the validation engine (M3), the schema model
-(M2), and the LSP server with parsing and diagnostics (M1).
+Status: milestone 7 — navigation and comfort (document symbols,
+folding ranges, definition/references, rename, quick fixes, semantic
+tokens, inlay hints), after hover (M6), completion (M5), language
+activation (M4), the validation engine (M3), the schema model (M2),
+and the LSP server with parsing and diagnostics (M1).
 
 ## Overview
 
@@ -187,6 +188,19 @@ The `SchemaRepository` caches loaded schemas by path and reloads them
 when the file's mtime changes — editing the schema is picked up on the
 next validation without restarting the server.
 
+The crate also hosts the per-language **reference rules**
+(`references`): pure data describing which attributes define named
+symbols and which refer to them, keyed by the document's root
+namespace. Built in are the speedata rules — `DefineColor/@name` is
+referenced by `color`/`framecolor`/…, `DefineFontfamily`/
+`DefineFontalias` by `fontfamily`/`fontface`, `DefineTextformat` by
+`textformat`, plus graphics, matters, positioning areas, groups, page
+types, and `Mark/@select` string literals referenced by `A/@link`. A
+`SymbolIndex` built from the rules and the AST lists every occurrence
+(definition or reference) with its exact value range; XPath values are
+only indexed when they are plain string literals. New languages or
+symbol kinds are additional rules, not code changes.
+
 ### `xml-completion`
 
 Schema-driven completion, independent of LSP types.
@@ -243,14 +257,38 @@ The LSP server itself (tower-lsp, LSP 3.17):
   and folding ranges (multi-line elements fold up to the line before
   their end tag; comments and CDATA fold entirely). Both are pure AST
   consumers and work without a schema.
+* **`navigation`** — go-to-definition and find-references over the
+  symbol index from `xml-languages`; built per request (walking the
+  tree is cheap compared to reparsing).
+* **`rename`** — `prepareRename` + `rename`: a symbol rename updates
+  the definition and every reference; a rename on an element name
+  updates start and end tag together. New names are validated (XML
+  `Name` for tags, quote-safe strings for symbol values).
+* **`code_actions`** — quick fixes anchored on the stable parser
+  diagnostic codes: insert the missing end tag of an unclosed element,
+  remove a stray end tag, quote or terminate an attribute value, add a
+  missing value.
+* **`semantic_tokens`** — full-document tokens: element names (prefix
+  reported separately as `namespace`), attribute names (`xmlns` as
+  `namespace`), values, comments, CDATA, PI targets, doctype.
+  Attribute values matching a symbol rule become `variable` tokens;
+  definitions carry the `definition` modifier, so references and
+  definitions are distinguishable in the editor. Multi-line tokens are
+  split per line as the spec demands.
+* **`inlay_hints`** — after the end tag of an element spanning eight
+  or more lines, the identifying attribute of its start tag is shown
+  (`</Record> element="data"`), keeping deeply nested layout files
+  navigable.
 * **`config`** — `ServerConfig`, read from `initializationOptions` and
   `workspace/didChangeConfiguration` (accepts `{ "xml": … }` or the
   options at the top level). Currently: diagnostics on/off and a per-
   document limit.
 * **`backend`** — wires everything together; implemented messages:
   `initialize`, `initialized`, `shutdown`, `didOpen`, `didChange`,
-  `didClose`, `didChangeConfiguration`, push diagnostics via
-  `textDocument/publishDiagnostics`. On every open/change the backend
+  `didClose`, `didChangeConfiguration`, completion, hover,
+  documentSymbol, foldingRange, definition, references,
+  prepareRename/rename, codeAction, semanticTokens/full, inlayHint,
+  push diagnostics via `textDocument/publishDiagnostics`. On every open/change the backend
   resolves the document's language, loads the schema through the
   repository, and merges well-formedness and validation diagnostics into
   one publish; schema problems surface as a single `schema-load` warning
@@ -270,10 +308,11 @@ The LSP server itself (tower-lsp, LSP 3.17):
 
 ## Planned Structure (Roadmap)
 
-Feature modules still to come in the server, in this order: hover, document symbols, folding ranges, definition/references, rename,
-code actions, semantic tokens, inlay hints. Per-language extension points
-(reference resolution, quick fixes — e.g. speedata-specific navigation)
-will grow on top of `xml-languages` when those features arrive.
+The server-side feature set of M1–M7 is complete. Next up is
+publishing the Zed extension (M8); the reference rules in
+`xml-languages` are the extension point for additional per-language
+navigation (more symbol kinds, more languages) and, later,
+configuration-driven rules.
 
 ## Performance Notes
 
