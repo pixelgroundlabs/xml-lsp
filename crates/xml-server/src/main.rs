@@ -9,5 +9,6 @@ async fn main() {
     let stdout = tokio::io::stdout();
 
     let (service, socket) = LspService::new(Backend::new);
-    Server::new(stdin, stdout, socket).serve(service).await;
+    // Only allow a single message to be processed at a time to enforce a strict message order
+    Server::new(stdin, stdout, socket).concurrency_level(1).serve(service).await;
 }
